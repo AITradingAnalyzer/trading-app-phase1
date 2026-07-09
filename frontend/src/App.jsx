@@ -1,8 +1,12 @@
 import Dashboard from './pages/Dashboard'
+import Footer from './components/Footer'
 
 function App() {
   return (
-    <Dashboard />
+    <div>
+      <Dashboard />
+      <Footer />
+    </div>
   )
 }
 
