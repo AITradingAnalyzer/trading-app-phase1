@@ -5,6 +5,7 @@ from .database import Base, engine, SessionLocal
 from . import crud, models, schemas
 from .market_data import get_stock_price
 from .news_fetcher import get_news
+from .ai_analyzer import analyze_stock_with_ai
 
 
 Base.metadata.create_all(bind=engine)
@@ -49,3 +50,33 @@ def stock_price(symbol: str):
 @app.get("/news/{symbol}")
 async def news_headlines(symbol: str):
     return await get_news(symbol)
+    
+    
+@app.get("/analyze/{symbol}")
+async def analyze_stock(symbol: str):
+    """
+    Get stock data + news + AI analysis all in one endpoint
+    """
+    # get_stock_price is a normal function, so NO await here
+    stock_data = get_stock_price(symbol)
+    if "error" in stock_data:
+        return stock_data
+
+    # get_news is async, so YES await here
+    news_data = await get_news(symbol)
+    if "error" in news_data:
+        return news_data
+
+    # analyze_stock_with_ai is async, so YES await here
+    analysis = await analyze_stock_with_ai(
+        symbol=symbol,
+        stock_data=stock_data,
+        news_data=news_data
+    )
+
+    return {
+        "symbol": symbol.upper(),
+        "stock_data": stock_data,
+        "news": news_data,
+        "ai_analysis": analysis
+    }
