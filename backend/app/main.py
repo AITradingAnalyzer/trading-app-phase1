@@ -4,6 +4,8 @@ from sqlalchemy.orm import Session
 from .database import Base, engine, SessionLocal
 from . import crud, models, schemas
 from .market_data import get_stock_price
+from .news_fetcher import get_news
+
 
 Base.metadata.create_all(bind=engine)
 
@@ -43,3 +45,7 @@ def create_signal(signal: schemas.SignalCreate, db: Session = Depends(get_db)):
 @app.get("/stock/{symbol}")
 def stock_price(symbol: str):
     return get_stock_price(symbol)
+    
+@app.get("/news/{symbol}")
+async def news_headlines(symbol: str):
+    return await get_news(symbol)
