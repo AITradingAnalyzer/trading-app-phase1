@@ -3,6 +3,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 from .database import Base, engine, SessionLocal
 from . import crud, models, schemas
+from .market_data import get_stock_price
 
 Base.metadata.create_all(bind=engine)
 
@@ -38,3 +39,7 @@ def read_signals(db: Session = Depends(get_db)):
 @app.post("/signals", response_model=schemas.SignalOut)
 def create_signal(signal: schemas.SignalCreate, db: Session = Depends(get_db)):
     return crud.create_signal(db, signal)
+    
+@app.get("/stock/{symbol}")
+def stock_price(symbol: str):
+    return get_stock_price(symbol)
