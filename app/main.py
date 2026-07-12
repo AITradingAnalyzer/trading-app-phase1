@@ -1,7 +1,9 @@
 # app/main.py
 
 import os
+import json
 import logging
+import threading
 from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, Depends, HTTPException
@@ -23,6 +25,46 @@ logger = logging.getLogger(__name__)
 
 # ─── Create all DB tables on startup ───
 Base.metadata.create_all(bind=engine)
+
+
+# ─── Helper: Normalize AI Analysis Result ──────────────────────
+def normalize_analysis_result(result):
+    """Ensure AI analysis result is always a dict with signal, confidence, reasoning."""
+    if isinstance(result, dict):
+        return result
+
+    if isinstance(result, str):
+        text = result.strip()
+        # Remove markdown code fences if present
+        if text.startswith("```json"):
+            text = text[7:]
+        elif text.startswith("```"):
+            text = text[3:]
+        if text.endswith("```"):
+            text = text[:-3]
+        text = text.strip()
+
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                return parsed
+        except Exception:
+            pass
+
+        # Fallback: Treat as reasoning text
+        return {
+            "signal": "HOLD",
+            "confidence": 0.0,
+            "reasoning": text
+        }
+
+    # Fallback for any other type
+    return {
+        "signal": "HOLD",
+        "confidence": 0.0,
+        "reasoning": str(result)
+    }
+
 
 # ─── Scheduler Setup ────────────────────────────────────────────
 scheduler = BackgroundScheduler()
@@ -67,6 +109,8 @@ def run_scheduled_analysis():
                         news_data=news_data
                     )
                 )
+                # 🔧 FIX: Normalize the result to guarantee it's a dict
+                analysis = normalize_analysis_result(analysis)
 
                 # Save signal
                 crud.save_analysis_signal(
@@ -119,6 +163,9 @@ def start_scheduler():
 
     scheduler.start()
     logger.info(f"🚀 [Scheduler] Started — running every {INTERVAL_MINUTES} minutes")
+
+    # 🔧 FIX: Run once immediately at startup so signals appear right away
+    threading.Thread(target=run_scheduled_analysis, daemon=True).start()
 
 
 def stop_scheduler():
@@ -282,6 +329,8 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     analysis = await analyze_stock_with_ai(
         symbol=symbol, stock_data=stock_data, news_data=news_data
     )
+    # 🔧 FIX: Normalize the result to guarantee it's a dict
+    analysis = normalize_analysis_result(analysis)
 
     # Step 4a: Save Signal to DB
     try:
