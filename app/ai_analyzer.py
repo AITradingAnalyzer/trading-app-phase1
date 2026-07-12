@@ -25,7 +25,7 @@ async def analyze_stock_with_ai(symbol: str, stock_data: dict, news_data: dict) 
     genai.configure(api_key=api_key)
 
     # ✅ Updated model name
-    model = genai.GenerativeModel("models/gemini-1.5-flash")
+    model = genai.GenerativeModel("models/gemini-2.0-flash-exp")
 
     # Format news
     if isinstance(news_data, list):
