@@ -1,5 +1,6 @@
 import os
 import json
+import asyncio
 import google.generativeai as genai
 from dotenv import load_dotenv
 from fastapi import HTTPException
@@ -11,10 +12,6 @@ FALLBACK_MODEL = "gemini-2.5-flash"
 
 
 def _configure_genai():
-    """
-    Configure Gemini only when needed.
-    This avoids crashing the whole app at import time.
-    """
     api_key = os.getenv("GOOGLE_API_KEY")
     if not api_key:
         raise HTTPException(
@@ -59,7 +56,6 @@ def _parse_response(text: str) -> dict:
             detail="AI returned an empty response."
         )
 
-    # Handle markdown code fences if model still returns them
     if raw.startswith("```"):
         lines = raw.splitlines()
 
@@ -74,13 +70,11 @@ def _parse_response(text: str) -> dict:
         if raw.lower().startswith("json"):
             raw = raw[4:].strip()
 
-    # First try direct JSON parsing
     try:
         return json.loads(raw)
     except json.JSONDecodeError:
         pass
 
-    # Second try: extract JSON object from extra surrounding text
     start = raw.find("{")
     end = raw.rfind("}")
 
@@ -108,11 +102,30 @@ def _call_model(model_name: str, prompt: str) -> dict:
     return _parse_response(text)
 
 
-def analyze_stock_with_ai(*args, **kwargs) -> dict:
-    """
-    Backward-compatible public function.
+def _analyze_sync(stock_data: dict, news_data: dict) -> dict:
+    _configure_genai()
+    prompt = _build_prompt(stock_data, news_data)
 
-    Supports either:
+    try:
+        return _call_model(PRIMARY_MODEL, prompt)
+    except Exception as primary_error:
+        print(f"[WARN] Primary model failed ({PRIMARY_MODEL}): {primary_error}")
+
+    try:
+        return _call_model(FALLBACK_MODEL, prompt)
+    except Exception as fallback_error:
+        print(f"[WARN] Fallback model failed ({FALLBACK_MODEL}): {fallback_error}")
+        raise HTTPException(
+            status_code=500,
+            detail="AI analysis unavailable. Both Gemini models failed."
+        )
+
+
+async def analyze_stock_with_ai(*args, **kwargs) -> dict:
+    """
+    Async version for FastAPI routes and scheduler.
+
+    Supports:
     - analyze_stock_with_ai(stock_data, news_data)
     - analyze_stock_with_ai(symbol, stock_data, news_data)
     - analyze_stock_with_ai(stock_data=..., news_data=...)
@@ -134,26 +147,11 @@ def analyze_stock_with_ai(*args, **kwargs) -> dict:
             detail="analyze_stock_with_ai requires stock_data and news_data."
         )
 
-    _configure_genai()
-    prompt = _build_prompt(stock_data, news_data)
-
-    try:
-        return _call_model(PRIMARY_MODEL, prompt)
-    except Exception as primary_error:
-        print(f"[WARN] Primary model failed ({PRIMARY_MODEL}): {primary_error}")
-
-    try:
-        return _call_model(FALLBACK_MODEL, prompt)
-    except Exception as fallback_error:
-        print(f"[WARN] Fallback model failed ({FALLBACK_MODEL}): {fallback_error}")
-        raise HTTPException(
-            status_code=500,
-            detail="AI analysis unavailable. Both Gemini models failed."
-        )
+    return await asyncio.to_thread(_analyze_sync, stock_data, news_data)
 
 
 def get_ai_analysis(stock_data: dict, news_data: dict) -> dict:
     """
-    Optional alias so both old and new code work.
+    Optional sync helper if you ever need non-async usage elsewhere.
     """
-    return analyze_stock_with_ai(stock_data, news_data)
+    return _analyze_sync(stock_data, news_data)
