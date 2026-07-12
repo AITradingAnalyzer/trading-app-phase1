@@ -1,29 +1,163 @@
 # app/main.py
+
+import os
+import logging
+from contextlib import asynccontextmanager
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
+
 from .database import Base, engine, SessionLocal
 from . import crud, models, schemas
 from .market_data import get_stock_price
 from .news_fetcher import get_news
 from .ai_analyzer import analyze_stock_with_ai
 
+# ─── Scheduler Imports ───
+from apscheduler.schedulers.background import BackgroundScheduler
+from apscheduler.triggers.interval import IntervalTrigger
+
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # ─── Create all DB tables on startup ───
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="AI Trading Analyzer API")
+# ─── Scheduler Setup ────────────────────────────────────────────
+scheduler = BackgroundScheduler()
+DEFAULT_SYMBOLS = ["AAPL", "TSLA", "GOOGL", "MSFT", "AMZN"]
+INTERVAL_MINUTES = int(os.getenv("SCHEDULER_INTERVAL", "15"))
+
+
+def run_scheduled_analysis():
+    """Background task: analyze all watched symbols and save to DB."""
+    from .database import SessionLocal as db_session
+
+    symbols = os.getenv("WATCH_SYMBOLS", ",".join(DEFAULT_SYMBOLS)).split(",")
+    logger.info(f"🔄 [Scheduler] Starting analysis for {symbols}")
+
+    db = db_session()
+    try:
+        for symbol in symbols:
+            symbol = symbol.strip().upper()
+            if not symbol:
+                continue
+
+            try:
+                import asyncio
+
+                # Fetch stock data
+                stock_data = get_stock_price(symbol)
+                if "error" in stock_data:
+                    logger.warning(f"⚠️ [Scheduler] Skipping {symbol}: {stock_data['error']}")
+                    continue
+
+                # Fetch news
+                news_data = asyncio.run(get_news(symbol))
+                if isinstance(news_data, dict) and "error" in news_data:
+                    logger.warning(f"⚠️ [Scheduler] News skip {symbol}: {news_data['error']}")
+                    continue
+
+                # Run AI analysis
+                analysis = asyncio.run(
+                    analyze_stock_with_ai(
+                        symbol=symbol,
+                        stock_data=stock_data,
+                        news_data=news_data
+                    )
+                )
+
+                # Save signal
+                crud.save_analysis_signal(
+                    db=db,
+                    symbol=symbol,
+                    signal=analysis.get("signal", "HOLD"),
+                    confidence=float(analysis.get("confidence", 0.0)),
+                    analysis_text=analysis.get("reasoning", str(analysis))
+                )
+                logger.info(f"✅ [Scheduler] {symbol} → {analysis.get('signal', 'HOLD')}")
+
+                # Save news articles
+                articles = news_data if isinstance(news_data, list) else news_data.get("articles", [])
+                for article in articles[:5]:
+                    crud.save_news_article(
+                        db=db,
+                        symbol=symbol,
+                        headline=article.get("headline", article.get("title", "No headline")),
+                        summary=article.get("summary", ""),
+                        url=article.get("url", ""),
+                        published_at=article.get("published_at", None)
+                    )
+
+            except Exception as e:
+                logger.error(f"❌ [Scheduler] Error for {symbol}: {e}")
+
+        db.commit()
+        logger.info(f"✅ [Scheduler] Run complete for {len(symbols)} symbols")
+
+    except Exception as e:
+        logger.error(f"❌ [Scheduler] Fatal error: {e}")
+        db.rollback()
+    finally:
+        db.close()
+
+
+def start_scheduler():
+    """Start the background scheduler."""
+    if scheduler.running:
+        logger.warning("[Scheduler] Already running — skipping")
+        return
+
+    scheduler.add_job(
+        run_scheduled_analysis,
+        IntervalTrigger(minutes=INTERVAL_MINUTES),
+        id="analyze_all_symbols",
+        name=f"Analyze all symbols every {INTERVAL_MINUTES} min",
+        replace_existing=True,
+    )
+
+    scheduler.start()
+    logger.info(f"🚀 [Scheduler] Started — running every {INTERVAL_MINUTES} minutes")
+
+
+def stop_scheduler():
+    """Gracefully stop the scheduler."""
+    if scheduler.running:
+        scheduler.shutdown(wait=False)
+        logger.info("🛑 [Scheduler] Stopped")
+
+
+# ─── Lifespan (Startup / Shutdown) ──────────────────────────────
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    # Startup
+    logger.info("🚀 Starting up — initializing scheduler...")
+    start_scheduler()
+    yield
+    # Shutdown
+    logger.info("🛑 Shutting down — stopping scheduler...")
+    stop_scheduler()
+
 
 # ─── CORS Middleware ───
+app = FastAPI(
+    title="AI Trading Analyzer API",
+    lifespan=lifespan,
+)
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "http://localhost:5173",
-        "https://trading-app-phase1.netlify.app"
+        "https://trading-app-phase1.netlify.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
+
 
 # ─── DB Dependency ───
 def get_db():
@@ -52,17 +186,22 @@ def read_signals(db: Session = Depends(get_db)):
     """Get all signals from the database"""
     return crud.get_signals(db)
 
+
 @app.post("/signals", response_model=schemas.SignalOut)
 def create_signal(signal: schemas.SignalCreate, db: Session = Depends(get_db)):
     """Manually create a signal"""
     return crud.create_signal(db, signal)
+
 
 @app.get("/signals/history/{symbol}")
 def signal_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
     """Get signal history for a specific stock"""
     history = crud.get_signal_history(db, symbol=symbol.upper(), limit=limit)
     if not history:
-        raise HTTPException(status_code=404, detail=f"No signal history found for {symbol.upper()}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No signal history found for {symbol.upper()}",
+        )
     return history
 
 
@@ -85,13 +224,33 @@ async def news_headlines(symbol: str):
     """Get latest news for a stock"""
     return await get_news(symbol)
 
+
 @app.get("/news/history/{symbol}")
 def news_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
     """Get saved news history for a stock"""
     history = crud.get_news_history(db, symbol=symbol.upper(), limit=limit)
     if not history:
-        raise HTTPException(status_code=404, detail=f"No news history found for {symbol.upper()}")
+        raise HTTPException(
+            status_code=404,
+            detail=f"No news history found for {symbol.upper()}",
+        )
     return history
+
+
+# ─────────────────────────────────────────
+# SCHEDULER STATUS
+# ─────────────────────────────────────────
+
+@app.get("/scheduler/status")
+def scheduler_status():
+    """Check if the background scheduler is running"""
+    return {
+        "running": scheduler.running,
+        "interval_minutes": INTERVAL_MINUTES,
+        "next_run_time": str(scheduler.get_job("analyze_all_symbols").next_run_time)
+        if scheduler.get_job("analyze_all_symbols")
+        else None,
+    }
 
 
 # ─────────────────────────────────────────
@@ -121,9 +280,7 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
 
     # Step 3: Claude AI Analysis
     analysis = await analyze_stock_with_ai(
-        symbol=symbol,
-        stock_data=stock_data,
-        news_data=news_data
+        symbol=symbol, stock_data=stock_data, news_data=news_data
     )
 
     # Step 4a: Save Signal to DB
@@ -133,7 +290,7 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
             symbol=symbol.upper(),
             signal=analysis.get("signal", "HOLD"),
             confidence=float(analysis.get("confidence", 0.0)),
-            analysis_text=analysis.get("reasoning", str(analysis))
+            analysis_text=analysis.get("reasoning", str(analysis)),
         )
         print(f"✅ Signal saved: {symbol.upper()} → {analysis.get('signal')}")
     except Exception as e:
@@ -141,7 +298,11 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
 
     # Step 4b: Save News Articles to DB
     try:
-        articles = news_data if isinstance(news_data, list) else news_data.get("articles", [])
+        articles = (
+            news_data
+            if isinstance(news_data, list)
+            else news_data.get("articles", [])
+        )
         for article in articles[:5]:  # Save top 5
             crud.save_news_article(
                 db=db,
@@ -149,7 +310,7 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
                 headline=article.get("headline", article.get("title", "No headline")),
                 summary=article.get("summary", ""),
                 url=article.get("url", ""),
-                published_at=article.get("published_at", None)
+                published_at=article.get("published_at", None),
             )
         print(f"✅ News saved: {len(articles[:5])} articles for {symbol.upper()}")
     except Exception as e:
@@ -160,5 +321,5 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
         "symbol": symbol.upper(),
         "stock_data": stock_data,
         "news": news_data,
-        "ai_analysis": analysis
+        "ai_analysis": analysis,
     }
