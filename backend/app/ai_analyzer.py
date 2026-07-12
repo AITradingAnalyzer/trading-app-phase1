@@ -13,9 +13,7 @@ async def analyze_stock_with_ai(symbol: str, stock_data: dict, news_data: dict) 
     Always returns a dict with: signal, confidence, reasoning
     """
 
-    # ✅ Read Google API key from environment
     api_key = os.getenv("GOOGLE_API_KEY")
-
     if not api_key:
         logger.error("❌ No GOOGLE_API_KEY found in environment variables.")
         return {
@@ -24,13 +22,12 @@ async def analyze_stock_with_ai(symbol: str, stock_data: dict, news_data: dict) 
             "reasoning": "Error: GOOGLE_API_KEY not set in environment variables."
         }
 
-    # ✅ Configure Gemini
     genai.configure(api_key=api_key)
 
-    # ✅ Use Gemini 1.5 Flash — fastest & free tier friendly
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    # ✅ Updated model name
+    model = genai.GenerativeModel("gemini-1.5-flash-latest")
 
-    # Format news cleanly
+    # Format news
     if isinstance(news_data, list):
         headlines = news_data
     elif isinstance(news_data, dict):
@@ -43,7 +40,6 @@ async def analyze_stock_with_ai(symbol: str, stock_data: dict, news_data: dict) 
         for item in headlines[:5]
     ) or "No recent news available."
 
-    # ✅ Prompt demanding structured JSON
     prompt = f"""You are an expert stock market analyst. Analyze the following data for {symbol} and return ONLY valid JSON.
 
 STOCK DATA:
@@ -75,7 +71,6 @@ Rules:
 """
 
     try:
-        # ✅ Gemini doesn't support streaming here — use generate_content
         response = model.generate_content(
             prompt,
             generation_config=genai.types.GenerationConfig(
@@ -87,7 +82,7 @@ Rules:
         raw_text = response.text.strip()
         logger.info(f"🤖 [AI] Raw response for {symbol}: {raw_text[:200]}")
 
-        # ✅ Strip any accidental markdown fences
+        # Strip any accidental markdown fences
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:]
         elif raw_text.startswith("```"):
