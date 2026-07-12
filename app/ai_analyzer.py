@@ -3,31 +3,33 @@
 import os
 import json
 import logging
-from anthropic import Anthropic
+import google.generativeai as genai
 
 logger = logging.getLogger(__name__)
 
 
 async def analyze_stock_with_ai(symbol: str, stock_data: dict, news_data: dict) -> dict:
     """
-    Send stock data + news to Claude for intelligent analysis.
+    Send stock data + news to Google Gemini for intelligent analysis.
     Always returns a dict with: signal, confidence, reasoning
     """
 
-    # ✅ FIX 1: Read key at call-time, not at module load
-    # ✅ FIX 2: Support both ANTHROPIC_API_KEY (standard) and CLAUDE_API_KEY (legacy)
-    api_key = os.getenv("ANTHROPIC_API_KEY") or os.getenv("CLAUDE_API_KEY")
+    # ✅ Read Google API key from environment
+    api_key = os.getenv("GOOGLE_API_KEY")
 
     if not api_key:
-        logger.error("❌ No Anthropic API key found in environment variables.")
+        logger.error("❌ No GOOGLE_API_KEY found in environment variables.")
         return {
             "signal": "HOLD",
             "confidence": 0.0,
-            "reasoning": "Error: ANTHROPIC_API_KEY not set in environment variables."
+            "reasoning": "Error: GOOGLE_API_KEY not set in environment variables."
         }
 
-    # ✅ FIX 3: Pass key explicitly to client — no reliance on env auto-detection
-    client = Anthropic(api_key=api_key)
+    # ✅ Configure Gemini
+    genai.configure(api_key=api_key)
+
+    # ✅ Use Gemini 1.5 Flash — fastest & free tier friendly
+    model = genai.GenerativeModel("models/gemini-1.5-flash")
 
     # Format news cleanly
     if isinstance(news_data, list):
@@ -42,8 +44,8 @@ async def analyze_stock_with_ai(symbol: str, stock_data: dict, news_data: dict) 
         for item in headlines[:5]
     ) or "No recent news available."
 
-    # ✅ FIX 4: Prompt now demands structured JSON output
-    prompt = f"""You are an expert stock market analyst. Analyze the following data for {symbol} and return a JSON response.
+    # ✅ Prompt demanding structured JSON
+    prompt = f"""You are an expert stock market analyst. Analyze the following data for {symbol} and return ONLY valid JSON.
 
 STOCK DATA:
 - Symbol: {symbol}
@@ -56,38 +58,38 @@ STOCK DATA:
 RECENT NEWS:
 {news_text}
 
-Based on the stock data and news, return ONLY a valid JSON object (no extra text, no markdown, no code fences) in this exact format:
-
+Return ONLY a valid JSON object (no markdown, no code fences, no extra text) in this exact format:
 {{
   "signal": "BUY" or "SELL" or "HOLD",
   "confidence": <float between 0.0 and 1.0>,
-  "reasoning": "<2-3 sentence explanation of your recommendation>",
+  "reasoning": "<2-3 sentence explanation>",
   "sentiment": "bullish" or "bearish" or "neutral",
-  "key_drivers": "<main factors influencing this recommendation>",
-  "risk_factors": "<key risks to watch>"
+  "key_drivers": "<main factors>",
+  "risk_factors": "<key risks>"
 }}
 
 Rules:
-- signal must be exactly one of: BUY, SELL, HOLD
-- confidence must be a number from 0.0 (very uncertain) to 1.0 (very confident)
-- Be decisive — only use HOLD if truly mixed signals
-- Base your analysis on both price action and news sentiment
+- signal: exactly one of BUY, SELL, HOLD
+- confidence: 0.0 to 1.0
+- Be decisive — only HOLD if truly mixed signals
+- Base analysis on both price action and news sentiment
 """
 
     try:
-        message = client.messages.create(
-            model="claude-3-5-sonnet-20241022",
-            max_tokens=1024,
-            messages=[
-                {"role": "user", "content": prompt}
-            ]
+        # ✅ Gemini doesn't support streaming here — use generate_content
+        response = model.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
+                temperature=0.3,
+                max_output_tokens=1024,
+                response_mime_type="application/json"
+            )
         )
 
-        raw_text = message.content[0].text.strip()
+        raw_text = response.text.strip()
         logger.info(f"🤖 [AI] Raw response for {symbol}: {raw_text[:200]}")
 
-        # ✅ FIX 5: Safely parse the JSON response
-        # Strip any accidental markdown code fences
+        # ✅ Strip any accidental markdown fences
         if raw_text.startswith("```json"):
             raw_text = raw_text[7:]
         elif raw_text.startswith("```"):
@@ -98,11 +100,11 @@ Rules:
 
         parsed = json.loads(raw_text)
 
-        # Validate signal field
+        # Validate signal
         if parsed.get("signal") not in ("BUY", "SELL", "HOLD"):
             parsed["signal"] = "HOLD"
 
-        # Validate confidence field
+        # Validate confidence
         try:
             parsed["confidence"] = float(parsed.get("confidence", 0.5))
             parsed["confidence"] = max(0.0, min(1.0, parsed["confidence"]))
