@@ -69,7 +69,9 @@ def normalize_analysis_result(result):
 # ─── Scheduler Setup ────────────────────────────────────────────
 scheduler = BackgroundScheduler()
 DEFAULT_SYMBOLS = ["AAPL", "TSLA", "GOOGL", "MSFT", "AMZN"]
-INTERVAL_MINUTES = int(os.getenv("SCHEDULER_INTERVAL", "15"))
+
+# 🔁 CHANGED: from minutes=15 to hours=4
+INTERVAL_HOURS = int(os.getenv("SCHEDULER_INTERVAL_HOURS", "4"))
 
 
 def run_scheduled_analysis():
@@ -109,7 +111,7 @@ def run_scheduled_analysis():
                         news_data=news_data
                     )
                 )
-                # 🔧 FIX: Normalize the result to guarantee it's a dict
+                # Normalize the result to guarantee it's a dict
                 analysis = normalize_analysis_result(analysis)
 
                 # Save signal
@@ -153,18 +155,19 @@ def start_scheduler():
         logger.warning("[Scheduler] Already running — skipping")
         return
 
+    # 🔁 CHANGED: IntervalTrigger(minutes=...) → IntervalTrigger(hours=...)
     scheduler.add_job(
         run_scheduled_analysis,
-        IntervalTrigger(minutes=INTERVAL_MINUTES),
+        IntervalTrigger(hours=INTERVAL_HOURS),
         id="analyze_all_symbols",
-        name=f"Analyze all symbols every {INTERVAL_MINUTES} min",
+        name=f"Analyze all symbols every {INTERVAL_HOURS} hour(s)",
         replace_existing=True,
     )
 
     scheduler.start()
-    logger.info(f"🚀 [Scheduler] Started — running every {INTERVAL_MINUTES} minutes")
+    logger.info(f"🚀 [Scheduler] Started — running every {INTERVAL_HOURS} hour(s)")
 
-    # 🔧 FIX: Run once immediately at startup so signals appear right away
+    # Run once immediately at startup so signals appear right away
     threading.Thread(target=run_scheduled_analysis, daemon=True).start()
 
 
@@ -293,7 +296,8 @@ def scheduler_status():
     """Check if the background scheduler is running"""
     return {
         "running": scheduler.running,
-        "interval_minutes": INTERVAL_MINUTES,
+        # 🔁 CHANGED: reflect hours
+        "interval_hours": INTERVAL_HOURS,
         "next_run_time": str(scheduler.get_job("analyze_all_symbols").next_run_time)
         if scheduler.get_job("analyze_all_symbols")
         else None,
@@ -329,7 +333,7 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     analysis = await analyze_stock_with_ai(
         symbol=symbol, stock_data=stock_data, news_data=news_data
     )
-    # 🔧 FIX: Normalize the result to guarantee it's a dict
+    # Normalize the result to guarantee it's a dict
     analysis = normalize_analysis_result(analysis)
 
     # Step 4a: Save Signal to DB
