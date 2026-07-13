@@ -1,17 +1,18 @@
-import { BrowserRouter, Routes, Route } from "react-router-dom";
-import Navbar from "./components/Navbar";
-import Footer from "./components/Footer";
-import Dashboard from "./pages/Dashboard";
-import Signals from "./pages/Signals";
-import History from "./pages/History";
-import Settings from "./pages/Settings";
+import { BrowserRouter as Router, Routes, Route } from 'react-router-dom';
+import Navbar from './components/Navbar';
+import Footer from './components/Footer';
+import Dashboard from './pages/Dashboard';
+import Signals from './pages/Signals';
+import History from './pages/History';
+import Settings from './pages/Settings';
+import './App.css';
 
 function App() {
   return (
-    <BrowserRouter>
-      <div style={{ minHeight: "100vh", display: "flex", flexDirection: "column" }}>
+    <Router>
+      <div className="app-container">
         <Navbar />
-        <main style={{ flex: 1, padding: "24px" }}>
+        <main className="main-content">
           <Routes>
             <Route path="/" element={<Dashboard />} />
             <Route path="/signals" element={<Signals />} />
@@ -21,7 +22,7 @@ function App() {
         </main>
         <Footer />
       </div>
-    </BrowserRouter>
+    </Router>
   );
 }
 
