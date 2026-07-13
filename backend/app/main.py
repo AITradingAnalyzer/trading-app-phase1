@@ -70,8 +70,8 @@ def normalize_analysis_result(result):
 scheduler = BackgroundScheduler()
 DEFAULT_SYMBOLS = ["AAPL", "TSLA", "GOOGL", "MSFT", "AMZN"]
 
-# 🔁 CHANGED: from minutes=15 to hours=4
 INTERVAL_HOURS = int(os.getenv("SCHEDULER_INTERVAL_HOURS", "4"))
+RUN_SCHEDULER_ON_STARTUP = os.getenv("RUN_SCHEDULER_ON_STARTUP", "false").lower() == "true"
 
 
 def run_scheduled_analysis():
@@ -97,11 +97,11 @@ def run_scheduled_analysis():
                     logger.warning(f"⚠️ [Scheduler] Skipping {symbol}: {stock_data['error']}")
                     continue
 
-                # Fetch news
+                # Fetch news — gracefully handle failure (e.g., 429)
                 news_data = asyncio.run(get_news(symbol))
                 if isinstance(news_data, dict) and "error" in news_data:
-                    logger.warning(f"⚠️ [Scheduler] News skip {symbol}: {news_data['error']}")
-                    continue
+                    logger.warning(f"⚠️ [Scheduler] News unavailable for {symbol}: {news_data['error']}")
+                    news_data = []  # ⬅️ Don't skip — proceed with empty news
 
                 # Run AI analysis
                 analysis = asyncio.run(
@@ -111,7 +111,6 @@ def run_scheduled_analysis():
                         news_data=news_data
                     )
                 )
-                # Normalize the result to guarantee it's a dict
                 analysis = normalize_analysis_result(analysis)
 
                 # Save signal
@@ -124,17 +123,18 @@ def run_scheduled_analysis():
                 )
                 logger.info(f"✅ [Scheduler] {symbol} → {analysis.get('signal', 'HOLD')}")
 
-                # Save news articles
-                articles = news_data if isinstance(news_data, list) else news_data.get("articles", [])
-                for article in articles[:5]:
-                    crud.save_news_article(
-                        db=db,
-                        symbol=symbol,
-                        headline=article.get("headline", article.get("title", "No headline")),
-                        summary=article.get("summary", ""),
-                        url=article.get("url", ""),
-                        published_at=article.get("published_at", None)
-                    )
+                # Save news articles (only if we have them)
+                if news_data:
+                    articles = news_data if isinstance(news_data, list) else news_data.get("articles", [])
+                    for article in articles[:5]:
+                        crud.save_news_article(
+                            db=db,
+                            symbol=symbol,
+                            headline=article.get("headline", article.get("title", "No headline")),
+                            summary=article.get("summary", ""),
+                            url=article.get("url", ""),
+                            published_at=article.get("published_at", None)
+                        )
 
             except Exception as e:
                 logger.error(f"❌ [Scheduler] Error for {symbol}: {e}")
@@ -155,7 +155,6 @@ def start_scheduler():
         logger.warning("[Scheduler] Already running — skipping")
         return
 
-    # 🔁 CHANGED: IntervalTrigger(minutes=...) → IntervalTrigger(hours=...)
     scheduler.add_job(
         run_scheduled_analysis,
         IntervalTrigger(hours=INTERVAL_HOURS),
@@ -167,8 +166,12 @@ def start_scheduler():
     scheduler.start()
     logger.info(f"🚀 [Scheduler] Started — running every {INTERVAL_HOURS} hour(s)")
 
-    # Run once immediately at startup so signals appear right away
-    threading.Thread(target=run_scheduled_analysis, daemon=True).start()
+    # Optionally run once immediately at startup
+    if RUN_SCHEDULER_ON_STARTUP:
+        threading.Thread(target=run_scheduled_analysis, daemon=True).start()
+        logger.info("⚡ [Scheduler] Immediate startup analysis triggered")
+    else:
+        logger.info("⏭️ [Scheduler] Immediate startup analysis disabled — waiting for interval")
 
 
 def stop_scheduler():
@@ -294,13 +297,16 @@ def news_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
 @app.get("/scheduler/status")
 def scheduler_status():
     """Check if the background scheduler is running"""
+    next_run = (
+        str(scheduler.get_job("analyze_all_symbols").next_run_time)
+        if scheduler.get_job("analyze_all_symbols")
+        else None
+    )
     return {
         "running": scheduler.running,
-        # 🔁 CHANGED: reflect hours
         "interval_hours": INTERVAL_HOURS,
-        "next_run_time": str(scheduler.get_job("analyze_all_symbols").next_run_time)
-        if scheduler.get_job("analyze_all_symbols")
-        else None,
+        "run_on_startup": RUN_SCHEDULER_ON_STARTUP,
+        "next_run_time": next_run,
     }
 
 
@@ -314,7 +320,7 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     Full pipeline:
     1. Fetch real-time stock data
     2. Fetch latest news
-    3. Run Claude AI analysis
+    3. Run AI analysis
     4. Save signal + news to DB
     5. Return full result
     """
@@ -324,16 +330,17 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     if "error" in stock_data:
         raise HTTPException(status_code=400, detail=stock_data["error"])
 
-    # Step 2: News Data
+    # Step 2: News Data — gracefully handle failure
+    news_warning = None
     news_data = await get_news(symbol)
     if isinstance(news_data, dict) and "error" in news_data:
-        raise HTTPException(status_code=400, detail=news_data["error"])
+        news_warning = news_data["error"]
+        news_data = []  # ⬅️ Don't raise — proceed with empty news
 
-    # Step 3: Claude AI Analysis
+    # Step 3: AI Analysis
     analysis = await analyze_stock_with_ai(
         symbol=symbol, stock_data=stock_data, news_data=news_data
     )
-    # Normalize the result to guarantee it's a dict
     analysis = normalize_analysis_result(analysis)
 
     # Step 4a: Save Signal to DB
@@ -345,34 +352,36 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
             confidence=float(analysis.get("confidence", 0.0)),
             analysis_text=analysis.get("reasoning", str(analysis)),
         )
-        print(f"✅ Signal saved: {symbol.upper()} → {analysis.get('signal')}")
+        logger.info(f"✅ Signal saved: {symbol.upper()} → {analysis.get('signal')}")
     except Exception as e:
-        print(f"⚠️ Could not save signal: {e}")
+        logger.warning(f"⚠️ Could not save signal: {e}")
 
-    # Step 4b: Save News Articles to DB
-    try:
-        articles = (
-            news_data
-            if isinstance(news_data, list)
-            else news_data.get("articles", [])
-        )
-        for article in articles[:5]:  # Save top 5
-            crud.save_news_article(
-                db=db,
-                symbol=symbol.upper(),
-                headline=article.get("headline", article.get("title", "No headline")),
-                summary=article.get("summary", ""),
-                url=article.get("url", ""),
-                published_at=article.get("published_at", None),
+    # Step 4b: Save News Articles to DB (only if available)
+    if news_data:
+        try:
+            articles = (
+                news_data
+                if isinstance(news_data, list)
+                else news_data.get("articles", [])
             )
-        print(f"✅ News saved: {len(articles[:5])} articles for {symbol.upper()}")
-    except Exception as e:
-        print(f"⚠️ Could not save news: {e}")
+            for article in articles[:5]:
+                crud.save_news_article(
+                    db=db,
+                    symbol=symbol.upper(),
+                    headline=article.get("headline", article.get("title", "No headline")),
+                    summary=article.get("summary", ""),
+                    url=article.get("url", ""),
+                    published_at=article.get("published_at", None),
+                )
+            logger.info(f"✅ News saved: {len(articles[:5])} articles for {symbol.upper()}")
+        except Exception as e:
+            logger.warning(f"⚠️ Could not save news: {e}")
 
     # Step 5: Return Full Result
     return {
         "symbol": symbol.upper(),
         "stock_data": stock_data,
         "news": news_data,
+        "news_warning": news_warning,
         "ai_analysis": analysis,
     }
