@@ -6,6 +6,8 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
+import yfinance as yf  # ← ADD THIS IMPORT (for stock history)
+
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
@@ -259,13 +261,57 @@ def signal_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
 
 
 # ─────────────────────────────────────────
-# STOCK DATA
+# STOCK DATA (Real-time + History)
 # ─────────────────────────────────────────
 
 @app.get("/stock/{symbol}")
 def stock_price(symbol: str):
     """Get real-time stock price"""
     return get_stock_price(symbol)
+
+
+@app.get("/stock/history/{symbol}")
+def stock_history(symbol: str, period: str = "1mo"):
+    """
+    Get historical stock price data.
+    
+    Params:
+    - symbol: Stock symbol (e.g., AAPL, TSLA)
+    - period: Time period (1d, 1mo, 3mo, 1y, 5y, 10y, ytd, max)
+    
+    Returns:
+    - historical_data: List of {date, open, high, low, close, volume}
+    """
+    try:
+        stock = yf.Ticker(symbol)
+        hist = stock.history(period=period)
+        
+        if hist.empty:
+            raise HTTPException(status_code=404, detail=f"No historical data found for {symbol}")
+        
+        # Format the data
+        historical_data = []
+        for date, row in hist.iterrows():
+            historical_data.append({
+                "date": date.strftime("%Y-%m-%d"),
+                "open": round(float(row["Open"]), 2),
+                "high": round(float(row["High"]), 2),
+                "low": round(float(row["Low"]), 2),
+                "close": round(float(row["Close"]), 2),
+                "volume": int(row["Volume"])
+            })
+        
+        return {
+            "symbol": symbol.upper(),
+            "period": period,
+            "historical_data": historical_data,
+            "total_records": len(historical_data)
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Stock history error for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
 
 
 # ─────────────────────────────────────────
