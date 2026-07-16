@@ -92,3 +92,18 @@ export function saveTradeHistory(trades) {
 }
 
 export { API_BASE_URL };
+
+export async function fetchStockHistory(symbol, period = "1mo") {
+  try {
+    const response = await fetch(
+      `${API_URL}/stock/history/${symbol}?period=${period}`
+    );
+    if (!response.ok) {
+      throw new Error("Failed to fetch stock history");
+    }
+    return await response.json();
+  } catch (error) {
+    console.error("Stock history error:", error);
+    return null;
+  }
+}

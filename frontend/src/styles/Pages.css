@@ -1,252 +1,241 @@
-.page {
-  animation: fadeIn 0.3s ease;
+/* Page structure */
+.page-container {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 2rem 1rem;
+  min-height: calc(100vh - 120px);
 }
 
-@keyframes fadeIn {
-  from {
-    opacity: 0;
-    transform: translateY(10px);
-  }
-  to {
-    opacity: 1;
-    transform: translateY(0);
-  }
+.page-title {
+  font-size: 2.5rem;
+  font-weight: 700;
+  color: #00ff41;
+  margin-bottom: 0.5rem;
+  text-shadow: 0 0 20px rgba(0, 255, 65, 0.3);
 }
 
-/* Dashboard Stats */
-.stats-grid {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
-  gap: 1.5rem;
+.page-subtitle {
+  font-size: 1rem;
+  color: #a0a0a0;
   margin-bottom: 2rem;
 }
 
-.stat-card {
-  background-color: var(--secondary-bg);
-  border: 1px solid var(--border-color);
+/* Home page search form */
+.search-form {
+  display: flex;
+  gap: 1rem;
+  margin-bottom: 2rem;
+  flex-wrap: wrap;
+}
+
+.search-input {
+  flex: 1;
+  min-width: 250px;
+  padding: 0.75rem 1rem;
+  background-color: #1a2a3a;
+  border: 2px solid #00d4ff;
+  border-radius: 6px;
+  color: #ffffff;
+  font-size: 1rem;
+  outline: none;
+  transition: all 0.3s ease;
+}
+
+.search-input:focus {
+  border-color: #00ff41;
+  box-shadow: 0 0 15px rgba(0, 255, 65, 0.2);
+}
+
+.search-input::placeholder {
+  color: #707070;
+}
+
+.search-button {
+  padding: 0.75rem 1.5rem;
+  background: linear-gradient(135deg, #00ff41, #00d4ff);
+  color: #0f3460;
+  border: none;
+  border-radius: 6px;
+  font-weight: 600;
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  transition: all 0.3s ease;
+}
+
+.search-button:hover:not(:disabled) {
+  transform: translateY(-2px);
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.4);
+}
+
+.search-button:disabled {
+  opacity: 0.6;
+  cursor: not-allowed;
+}
+
+/* Grid layout for cards */
+.home-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+  gap: 1.5rem;
+  margin-top: 2rem;
+}
+
+/* Info cards */
+.info-card {
+  background-color: rgba(26, 42, 58, 0.7);
+  border: 1px solid rgba(0, 212, 255, 0.3);
   border-radius: 8px;
   padding: 1.5rem;
-  display: flex;
-  align-items: center;
-  gap: 1rem;
+  backdrop-filter: blur(10px);
   transition: all 0.3s ease;
 }
 
-.stat-card:hover {
-  border-color: var(--accent-color);
-  box-shadow: 0 0 20px rgba(0, 212, 255, 0.2);
-  transform: translateY(-4px);
+.info-card:hover {
+  border-color: #00ff41;
+  box-shadow: 0 0 20px rgba(0, 255, 65, 0.2);
 }
 
-.stat-icon {
-  font-size: 2rem;
-  min-width: 50px;
+.info-card.full-width {
+  grid-column: 1 / -1;
 }
 
-.stat-content {
-  flex: 1;
-}
-
-.stat-label {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-  margin-bottom: 0.5rem;
-}
-
-.stat-value {
-  color: var(--accent-color);
-  font-size: 1.5rem;
-  font-weight: bold;
-}
-
-/* Signals Table */
-.signals-table {
-  background-color: var(--secondary-bg);
-  border: 1px solid var(--border-color);
-  border-radius: 8px;
-  overflow: auto;
-}
-
-.signals-table table,
-.card table {
-  width: 100%;
-  border-collapse: collapse;
-}
-
-.signals-table th,
-.card th {
-  background-color: rgba(0, 212, 255, 0.1);
-  color: var(--accent-color);
-  padding: 1rem;
-  text-align: left;
-  font-weight: 600;
-  border-bottom: 2px solid var(--border-color);
-}
-
-.signals-table td,
-.card td {
-  padding: 1rem;
-  border-bottom: 1px solid var(--border-color);
-}
-
-.signals-table tr:hover,
-.card tr:hover {
-  background-color: rgba(0, 212, 255, 0.05);
-}
-
-.symbol {
-  font-weight: bold;
-  color: var(--accent-color);
-}
-
-.signal-type {
-  display: flex;
-  align-items: center;
-}
-
-.badge {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.5rem;
-  padding: 0.5rem 1rem;
-  border-radius: 4px;
-  font-size: 0.9rem;
-  font-weight: 600;
-}
-
-.badge.buy {
-  background-color: rgba(0, 255, 65, 0.2);
-  color: #00ff41;
-}
-
-.badge.sell {
-  background-color: rgba(255, 0, 110, 0.2);
-  color: #ff006e;
-}
-
-.buy-signal {
-  border-left: 4px solid #00ff41;
-}
-
-.sell-signal {
-  border-left: 4px solid #ff006e;
-}
-
-.timestamp {
-  color: var(--text-secondary);
-  font-size: 0.9rem;
-}
-
-.confidence-bar {
-  background-color: rgba(255, 255, 255, 0.1);
-  height: 6px;
-  border-radius: 3px;
-  overflow: hidden;
-  margin-bottom: 0.5rem;
-}
-
-.confidence-fill {
-  height: 100%;
-  transition: width 0.3s ease;
-}
-
-/* History Stats */
-.history-stats {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: 1.5rem;
-  margin-bottom: 2rem;
-}
-
-/* Settings Form */
-.form-group {
-  margin-bottom: 1.5rem;
-}
-
-.form-group label {
-  display: block;
-  margin-bottom: 0.5rem;
-  color: var(--text-primary);
-  font-weight: 500;
-}
-
-.form-input,
-.form-group select {
-  width: 100%;
-  padding: 0.75rem;
-  background-color: rgba(255, 255, 255, 0.05);
-  border: 1px solid var(--border-color);
-  border-radius: 4px;
-  color: var(--text-primary);
-  font-size: 1rem;
-  transition: all 0.3s ease;
-}
-
-.form-input:focus,
-.form-group select:focus {
-  outline: none;
-  border-color: var(--accent-color);
-  box-shadow: 0 0 10px rgba(0, 212, 255, 0.2);
-}
-
-.form-group.checkbox {
-  display: flex;
-  align-items: center;
-}
-
-.form-group.checkbox label {
-  display: flex;
-  align-items: center;
-  gap: 0.5rem;
-  margin: 0;
-  cursor: pointer;
-}
-
-.form-group.checkbox input {
-  cursor: pointer;
-  width: auto;
-  margin: 0;
-}
-
-/* Alerts */
-.alert {
-  padding: 1rem;
-  border-radius: 4px;
+.info-card h3 {
+  font-size: 1.1rem;
+  color: #00d4ff;
   margin-bottom: 1rem;
   display: flex;
   align-items: center;
+}
+
+.info-card p {
+  color: #c0c0c0;
+  line-height: 1.6;
+  margin: 0.5rem 0;
+}
+
+/* Price display */
+.price-value {
+  font-size: 2rem;
+  font-weight: 700;
+  color: #00ff41;
+  margin-top: 0.5rem;
+}
+
+/* Signal badge */
+.signal-badge {
+  display: inline-block;
+  padding: 0.5rem 1rem;
+  border-radius: 4px;
+  font-weight: 600;
+  font-size: 1.1rem;
+  margin: 0.5rem 0;
+  display: flex;
+  align-items: center;
   gap: 0.5rem;
 }
 
-.alert-success {
-  background-color: rgba(0, 255, 65, 0.1);
-  border: 1px solid #00ff41;
+.info-card .signal-badge {
+  background-color: rgba(0, 255, 65, 0.2);
   color: #00ff41;
+  border: 1px solid #00ff41;
+}
+
+/* News list */
+.news-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.news-item {
+  padding: 1rem;
+  background-color: rgba(0, 212, 255, 0.05);
+  border-left: 3px solid #00d4ff;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+  transition: all 0.3s ease;
+}
+
+.news-item:hover {
+  background-color: rgba(0, 212, 255, 0.1);
+}
+
+.news-item strong {
+  color: #00ff41;
+  display: block;
+  margin-bottom: 0.5rem;
+}
+
+.news-item p {
+  color: #a0a0a0;
+  font-size: 0.95rem;
+  margin: 0;
+}
+
+/* Suggestion list */
+.suggestion-list {
+  list-style: none;
+  padding: 0;
+  margin: 0;
+}
+
+.suggestion-item {
+  padding: 1rem;
+  background-color: rgba(0, 212, 255, 0.05);
+  border-left: 3px solid #00d4ff;
+  margin-bottom: 1rem;
+  border-radius: 4px;
+  transition: all 0.3s ease;
+}
+
+.suggestion-item:hover {
+  background-color: rgba(0, 212, 255, 0.1);
+  border-left-color: #00ff41;
+}
+
+.suggestion-item strong {
+  color: #00ff41;
+  display: block;
+  margin-bottom: 0.25rem;
+}
+
+.suggestion-item p {
+  color: #a0a0a0;
+  font-size: 0.95rem;
+  margin: 0.5rem 0 0;
+}
+
+/* Error box */
+.error-box {
+  background-color: rgba(255, 100, 100, 0.1);
+  border: 1px solid #ff6464;
+  border-radius: 6px;
+  padding: 1rem;
+  color: #ff9999;
+  margin-bottom: 1.5rem;
 }
 
 /* Responsive */
 @media (max-width: 768px) {
-  .stats-grid {
+  .page-title {
+    font-size: 2rem;
+  }
+
+  .search-form {
+    flex-direction: column;
+  }
+
+  .search-input {
+    min-width: auto;
+  }
+
+  .home-grid {
     grid-template-columns: 1fr;
   }
 
-  .signals-table table,
-  .card table {
-    font-size: 0.85rem;
-  }
-
-  .signals-table th,
-  .card th {
-    padding: 0.75rem 0.5rem;
-  }
-
-  .signals-table td,
-  .card td {
-    padding: 0.75rem 0.5rem;
-  }
-
-  .badge {
-    padding: 0.4rem 0.8rem;
-    font-size: 0.8rem;
+  .info-card.full-width {
+    grid-column: auto;
   }
 }
