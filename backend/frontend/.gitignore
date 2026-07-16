@@ -1,0 +1,14 @@
+# 1. Add gitignore
+cat > .gitignore << 'EOF'
+__pycache__/
+*.pyc
+*.pyo
+*.db
+venv/
+.env
+node_modules/
+dist/
+.DS_Store
+*.egg-info/
+.pytest_cache/
+EOF
