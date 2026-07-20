@@ -34,72 +34,61 @@ def get_currency_info(symbol: str):
     return {"currency": "USD", "currency_symbol": "$"}
 
 
-def resolve_ticker(symbol: str):
+def resolve_ticker(symbol: str) -> tuple:
     """
-    Try original symbol first.
-    If not found and no suffix is present, try .NS fallback.
-    Returns the resolved ticker symbol.
+    Resolve a stock symbol to a valid ticker.
+    Returns: (resolved_symbol, source_label)
     """
     symbol = symbol.upper().strip()
 
-    # If already has a suffix, use as-is
     if "." in symbol:
-        return symbol
+        return symbol, "direct"
 
-    # Try original symbol first (for US stocks)
+    # Try US first
     try:
-        stock = yf.Ticker(symbol)
-        hist = stock.history(period="5d")
+        test = yf.Ticker(symbol)
+        hist = test.history(period="5d")
         if not hist.empty:
-            logger.info(f"✅ Resolved '{symbol}' as direct ticker (US market)")
-            return symbol
+            logger.info(f"✅ '{symbol}' resolved as US ticker")
+            return symbol, "us"
     except Exception:
         pass
 
-    # Fallback to NSE (for Indian stocks)
-    ns_symbol = f"{symbol}.NS"
+    # Fallback to NSE
+    fallback = f"{symbol}.NS"
     try:
-        stock = yf.Ticker(ns_symbol)
-        hist = stock.history(period="5d")
+        test = yf.Ticker(fallback)
+        hist = test.history(period="5d")
         if not hist.empty:
-            logger.info(f"✅ Resolved '{symbol}' as NSE ticker '{ns_symbol}'")
-            return ns_symbol
+            logger.info(f"✅ '{symbol}' → resolved as Indian ticker '{fallback}'")
+            return fallback, "india_fallback"
     except Exception:
         pass
 
-    # Return original if both fail (let the caller handle error)
-    logger.warning(f"⚠️ Could not resolve '{symbol}' — returning as-is")
-    return symbol
+    logger.warning(f"⚠️ '{symbol}' could not be resolved")
+    return symbol, "unresolved"
 
 
 def get_stock_price(symbol: str):
     """
-    Fetch stock price data with:
-    - Auto .NS fallback for Indian stocks
-    - Currency detection (₹ for INR, $ for USD, etc.)
-    - Full stock info (PE ratio, market cap, 52-week high/low, etc.)
+    Fetch stock price data — raw data only.
+    main.py handles currency and ticker resolution.
     """
     try:
-        # Resolve the ticker
-        resolved_symbol = resolve_ticker(symbol)
-
-        # Fetch data
-        stock = yf.Ticker(resolved_symbol)
+        stock = yf.Ticker(symbol)
         hist = stock.history(period="5d")
 
         if hist.empty:
             return {
-                "error": f"No price data found for '{symbol}'. It may be delisted or invalid."
+                "error": f"No price data found for '{symbol}'."
             }
 
-        # Get additional info
         info = {}
         try:
             info = stock.info or {}
         except Exception:
             info = {}
 
-        # Extract values
         current_price = round(float(hist["Close"].iloc[-1]), 2)
         previous_close = info.get("previousClose")
         open_price = info.get("open")
@@ -110,37 +99,10 @@ def get_stock_price(symbol: str):
         pe_ratio = info.get("trailingPE")
         week_52_high = info.get("fiftyTwoWeekHigh")
         week_52_low = info.get("fiftyTwoWeekLow")
-        company_name = info.get("longName") or info.get("shortName") or resolved_symbol
-
-        # Determine currency
-        currency = info.get("currency")  # Try getting from Yahoo Finance first
-        currency_symbol_map = {
-            "USD": "$",
-            "INR": "₹",
-            "GBP": "£",
-            "EUR": "€",
-            "JPY": "¥",
-            "AUD": "A$",
-            "CAD": "CA$",
-            "HKD": "HK$",
-            "SGD": "S$",
-            "CNY": "¥",
-            "KRW": "₩",
-            "TWD": "NT$",
-            "SAR": "﷼",
-        }
-
-        if currency:
-            currency_symbol = currency_symbol_map.get(currency, currency)
-        else:
-            # Fallback: detect from suffix
-            currency_info = get_currency_info(resolved_symbol)
-            currency = currency_info["currency"]
-            currency_symbol = currency_info["currency_symbol"]
+        company_name = info.get("longName") or info.get("shortName") or symbol
 
         return {
-            "symbol": resolved_symbol.upper(),
-            "original_query": symbol.upper(),
+            "symbol": symbol.upper(),
             "company_name": company_name,
             "current_price": current_price,
             "previous_close": previous_close,
@@ -152,9 +114,6 @@ def get_stock_price(symbol: str):
             "pe_ratio": pe_ratio,
             "fifty_two_week_high": week_52_high,
             "fifty_two_week_low": week_52_low,
-            "currency": currency,
-            "currency_symbol": currency_symbol,
-            "resolved_symbol": resolved_symbol.upper(),
         }
 
     except Exception as e:

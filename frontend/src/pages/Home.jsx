@@ -19,7 +19,9 @@ function Home() {
     setResult(null);
 
     try {
-      const response = await fetch(`${API_URL}/analyze/${symbol.trim().toUpperCase()}`);
+      const response = await fetch(
+        `${API_URL}/analyze/${symbol.trim().toUpperCase()}`
+      );
       const data = await response.json();
 
       if (!response.ok) {
@@ -33,6 +35,20 @@ function Home() {
       setLoading(false);
     }
   };
+
+  const rawConfidence = result?.ai_analysis?.confidence;
+  const confidenceText =
+    rawConfidence == null
+      ? "N/A"
+      : `${rawConfidence <= 1
+          ? (rawConfidence * 100).toFixed(0)
+          : Number(rawConfidence).toFixed(0)}%`;
+
+  const newsItems = Array.isArray(result?.news)
+    ? result.news
+    : Array.isArray(result?.news?.articles)
+    ? result.news.articles
+    : [];
 
   return (
     <div className="page-container">
@@ -59,47 +75,49 @@ function Home() {
 
       {result && (
         <div className="home-grid">
-
-          {/* ✅ Bug 1 Fixed: last_price instead of price */}
           <div className="info-card">
             <h3>Current Price</h3>
             <p className="price-value">
-              {result.stock_data?.last_price
-                ? `$${result.stock_data.last_price}`
+              {result?.stock_data?.current_price != null
+                ? `${result?.stock_data?.currency_symbol || ""}${result?.stock_data?.current_price}`
                 : "N/A"}
             </p>
+            <p>{result?.stock_data?.company_name || result?.symbol || ""}</p>
           </div>
 
-          {/* ✅ Bug 3 Fixed: confidence multiplied by 100 */}
           <div className="info-card">
             <h3>AI Suggestion</h3>
             <div className="signal-badge">
-              {result.ai_analysis?.signal === "BUY" ? (
+              {result?.ai_analysis?.signal === "BUY" ? (
                 <ArrowUpRight size={16} />
-              ) : result.ai_analysis?.signal === "SELL" ? (
+              ) : result?.ai_analysis?.signal === "SELL" ? (
                 <ArrowDownRight size={16} />
               ) : null}
-              {result.ai_analysis?.signal || "HOLD"}
+              {result?.ai_analysis?.signal || "HOLD"}
             </div>
-            <p>Confidence: {((result.ai_analysis?.confidence ?? 0) * 100).toFixed(0)}%</p>
+            <p>Confidence: {confidenceText}</p>
           </div>
 
           <div className="info-card full-width">
             <h3>Reasoning</h3>
-            <p>{result.ai_analysis?.reasoning || "No reasoning available"}</p>
+            <p>{result?.ai_analysis?.reasoning || "No reasoning available"}</p>
           </div>
 
-          {/* ✅ Bug 2 Fixed: result.news.headlines instead of result.news */}
           <div className="info-card full-width">
             <h3>
               <Newspaper size={18} style={{ display: "inline", marginRight: "8px" }} />
               Latest News
             </h3>
-            {Array.isArray(result.news?.headlines) && result.news.headlines.length > 0 ? (
+
+            {result?.news_warning && (
+              <p>{result.news_warning}</p>
+            )}
+
+            {newsItems.length > 0 ? (
               <ul className="news-list">
-                {result.news.headlines.slice(0, 5).map((item, index) => (
+                {newsItems.slice(0, 5).map((item, index) => (
                   <li key={index} className="news-item">
-                    <strong>{item.headline || item.title}</strong>
+                    <strong>{item.headline || item.title || "No headline"}</strong>
                     <p>{item.summary || "No summary available"}</p>
                   </li>
                 ))}
@@ -108,7 +126,6 @@ function Home() {
               <p>No news found.</p>
             )}
           </div>
-
         </div>
       )}
     </div>

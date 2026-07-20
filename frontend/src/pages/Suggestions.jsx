@@ -23,6 +23,13 @@ function Suggestions() {
     loadSignals();
   }, []);
 
+  const formatConfidence = (value) => {
+    if (value == null) return "N/A";
+    const numeric = Number(value);
+    if (Number.isNaN(numeric)) return "N/A";
+    return numeric <= 1 ? `${(numeric * 100).toFixed(0)}%` : `${numeric.toFixed(0)}%`;
+  };
+
   const buySignals = signals.filter((s) => s.signal === "BUY");
   const sellSignals = signals.filter((s) => s.signal === "SELL");
 
@@ -47,7 +54,7 @@ function Suggestions() {
               <ul className="suggestion-list">
                 {buySignals.map((item, index) => (
                   <li key={index} className="suggestion-item">
-                    <strong>{item.symbol}</strong> — Confidence: {item.confidence}%
+                    <strong>{item.symbol}</strong> — Confidence: {formatConfidence(item.confidence)}
                     <p>{item.analysis_text || item.reasoning || "No details"}</p>
                   </li>
                 ))}
@@ -66,7 +73,7 @@ function Suggestions() {
               <ul className="suggestion-list">
                 {sellSignals.map((item, index) => (
                   <li key={index} className="suggestion-item">
-                    <strong>{item.symbol}</strong> — Confidence: {item.confidence}%
+                    <strong>{item.symbol}</strong> — Confidence: {formatConfidence(item.confidence)}
                     <p>{item.analysis_text || item.reasoning || "No details"}</p>
                   </li>
                 ))}
