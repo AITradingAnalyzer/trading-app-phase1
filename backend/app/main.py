@@ -73,6 +73,80 @@ def normalize_analysis_result(result):
     }
 
 
+# ─── NEW: Currency Detection ─────────────────────────────────────
+def get_currency(symbol: str) -> dict:
+    """
+    Determine currency and symbol based on stock exchange suffix.
+    Returns dict: { "currency": str, "currency_symbol": str }
+    """
+    suffix_map = {
+        '.NS':   { 'currency': 'INR', 'currency_symbol': '₹' },
+        '.BO':   { 'currency': 'INR', 'currency_symbol': '₹' },
+        '.L':    { 'currency': 'GBP', 'currency_symbol': '£' },
+        '.TO':   { 'currency': 'CAD', 'currency_symbol': 'CA$' },
+        '.AX':   { 'currency': 'AUD', 'currency_symbol': 'A$' },
+        '.DE':   { 'currency': 'EUR', 'currency_symbol': '€' },
+        '.PA':   { 'currency': 'EUR', 'currency_symbol': '€' },
+        '.MI':   { 'currency': 'EUR', 'currency_symbol': '€' },
+        '.HK':   { 'currency': 'HKD', 'currency_symbol': 'HK$' },
+        '.SS':   { 'currency': 'CNY', 'currency_symbol': '¥' },
+        '.SZ':   { 'currency': 'CNY', 'currency_symbol': '¥' },
+        '.TW':   { 'currency': 'TWD', 'currency_symbol': 'NT$' },
+        '.SA':   { 'currency': 'SAR', 'currency_symbol': '﷼' },
+        '.SI':   { 'currency': 'SGD', 'currency_symbol': 'S$' },
+        '.KS':   { 'currency': 'KRW', 'currency_symbol': '₩' },
+        '.T':    { 'currency': 'JPY', 'currency_symbol': '¥' },
+    }
+    
+    # Check suffix
+    for suffix, info in suffix_map.items():
+        if symbol.upper().endswith(suffix):
+            return info
+    
+    # Default to USD
+    return { 'currency': 'USD', 'currency_symbol': '$' }
+
+
+# ─── NEW: Resolve Ticker (auto-add .NS fallback) ────────────────
+def resolve_ticker(symbol: str) -> tuple:
+    """
+    Resolve a stock symbol to a valid ticker.
+    Returns: (resolved_symbol, source_label)
+    - If symbol contains a dot (e.g., 'TCS.NS'), use as-is.
+    - If symbol has no suffix, try it raw first, then fallback to .NS.
+    """
+    symbol = symbol.upper().strip()
+    
+    # If already has a suffix, use as-is
+    if '.' in symbol:
+        return symbol, 'direct'
+    
+    # Try raw symbol first (for US stocks like AAPL, TSLA)
+    try:
+        test = yf.Ticker(symbol)
+        hist = test.history(period="5d")
+        if not hist.empty:
+            logger.info(f"✅ '{symbol}' resolved as US ticker")
+            return symbol, 'us'
+    except Exception:
+        pass
+    
+    # Fallback: try with .NS suffix (Indian stocks)
+    fallback = f"{symbol}.NS"
+    try:
+        test = yf.Ticker(fallback)
+        hist = test.history(period="5d")
+        if not hist.empty:
+            logger.info(f"✅ '{symbol}' → resolved as Indian ticker '{fallback}'")
+            return fallback, 'india_fallback'
+    except Exception:
+        pass
+    
+    # Return original — let the caller handle error
+    logger.warning(f"⚠️ '{symbol}' could not be resolved — returning as-is")
+    return symbol, 'unresolved'
+
+
 # ─── Scheduler Setup ────────────────────────────────────────────
 scheduler = BackgroundScheduler()
 DEFAULT_SYMBOLS = ["AAPL", "TSLA", "GOOGL", "MSFT", "AMZN"]
@@ -257,11 +331,12 @@ def create_signal(signal: schemas.SignalCreate, db: Session = Depends(get_db)):
 @app.get("/signals/history/{symbol}")
 def signal_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
     """Get signal history for a specific stock"""
-    history = crud.get_signal_history(db, symbol=symbol.upper(), limit=limit)
+    resolved, _ = resolve_ticker(symbol)
+    history = crud.get_signal_history(db, symbol=resolved.upper(), limit=limit)
     if not history:
         raise HTTPException(
             status_code=404,
-            detail=f"No signal history found for {symbol.upper()}",
+            detail=f"No signal history found for {resolved.upper()}",
         )
     return history
 
@@ -272,8 +347,21 @@ def signal_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
 
 @app.get("/stock/{symbol}")
 def stock_price(symbol: str):
-    """Get real-time stock price"""
-    return get_stock_price(symbol)
+    """Get real-time stock price with currency info"""
+    resolved, source = resolve_ticker(symbol)
+    
+    stock_data = get_stock_price(resolved)
+    if "error" in stock_data:
+        # If raw failed and we were in fallback mode, it's truly not found
+        raise HTTPException(status_code=404, detail=stock_data["error"])
+    
+    # Add currency info
+    currency_info = get_currency(resolved)
+    stock_data["currency"] = currency_info["currency"]
+    stock_data["currency_symbol"] = currency_info["currency_symbol"]
+    stock_data["resolved_symbol"] = resolved
+    
+    return stock_data
 
 
 @app.get("/stock/history/{symbol}")
@@ -282,18 +370,21 @@ def stock_history(symbol: str, period: str = "1mo"):
     Get historical stock price data.
     
     Params:
-    - symbol: Stock symbol (e.g., AAPL, TSLA)
+    - symbol: Stock symbol (e.g., AAPL, TSLA, TCS)
     - period: Time period (1d, 1mo, 3mo, 1y, 5y, 10y, ytd, max)
     
     Returns:
     - historical_data: List of {date, open, high, low, close, volume}
+    - currency + currency_symbol
     """
+    resolved, source = resolve_ticker(symbol)
+    
     try:
-        stock = yf.Ticker(symbol)
+        stock = yf.Ticker(resolved)
         hist = stock.history(period=period)
         
         if hist.empty:
-            raise HTTPException(status_code=404, detail=f"No historical data found for {symbol}")
+            raise HTTPException(status_code=404, detail=f"No historical data found for {resolved}")
         
         # Format the data
         historical_data = []
@@ -307,16 +398,21 @@ def stock_history(symbol: str, period: str = "1mo"):
                 "volume": int(row["Volume"])
             })
         
+        currency_info = get_currency(resolved)
+        
         return {
-            "symbol": symbol.upper(),
+            "symbol": resolved.upper(),
+            "original_query": symbol.upper(),
             "period": period,
+            "currency": currency_info["currency"],
+            "currency_symbol": currency_info["currency_symbol"],
             "historical_data": historical_data,
             "total_records": len(historical_data)
         }
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Stock history error for {symbol}: {e}")
+        logger.error(f"Stock history error for {resolved}: {e}")
         raise HTTPException(status_code=500, detail=str(e))
 
 
@@ -333,11 +429,12 @@ async def news_headlines(symbol: str):
 @app.get("/news/history/{symbol}")
 def news_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
     """Get saved news history for a stock"""
-    history = crud.get_news_history(db, symbol=symbol.upper(), limit=limit)
+    resolved, _ = resolve_ticker(symbol)
+    history = crud.get_news_history(db, symbol=resolved.upper(), limit=limit)
     if not history:
         raise HTTPException(
             status_code=404,
-            detail=f"No news history found for {symbol.upper()}",
+            detail=f"No news history found for {resolved.upper()}",
         )
     return history
 
@@ -363,42 +460,53 @@ def scheduler_status():
 
 
 # ─────────────────────────────────────────
-# AI ANALYSIS (Main Endpoint)
+# AI ANALYSIS (Main Endpoint) — UPDATED ✅
 # ─────────────────────────────────────────
 
 @app.get("/analyze/{symbol}")
 async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     """
     Full pipeline:
-    1. Fetch real-time stock data
-    2. Fetch latest news
-    3. Run AI analysis
-    4. Save signal + news to DB
-    5. Return full result
+    1. Resolve ticker (auto .NS fallback for Indian stocks)
+    2. Fetch real-time stock data
+    3. Fetch latest news
+    4. Run AI analysis
+    5. Save signal + news to DB
+    6. Return full result with currency info
     """
 
+    # Step 0: Resolve the ticker (auto-detect .NS)
+    resolved, source = resolve_ticker(symbol)
+    logger.info(f"📈 Analyzing '{symbol}' → resolved to '{resolved}' (source: {source})")
+
     # Step 1: Stock Data
-    stock_data = get_stock_price(symbol)
+    stock_data = get_stock_price(resolved)
     if "error" in stock_data:
         raise HTTPException(status_code=400, detail=stock_data["error"])
 
+    # Add currency info to stock_data
+    currency_info = get_currency(resolved)
+    stock_data["currency"] = currency_info["currency"]
+    stock_data["currency_symbol"] = currency_info["currency_symbol"]
+    stock_data["resolved_symbol"] = resolved
+
     # Step 2: News Data — gracefully handle failure
     news_warning = None
-    news_data = await get_news(symbol)
+    news_data = await get_news(resolved)
     if isinstance(news_data, dict) and "error" in news_data:
         news_warning = news_data["error"]
         news_data = []  # Don't raise — proceed with empty news
 
-    # Step 3: AI Analysis (✅ INDENTATION FIXED + try/except)
+    # Step 3: AI Analysis
     try:
         analysis = await analyze_stock_with_ai(
-            symbol=symbol,
+            symbol=resolved,
             stock_data=stock_data,
             news_data=news_data
         )
         analysis = normalize_analysis_result(analysis)
     except Exception as e:
-        logger.exception(f"AI analysis failed for {symbol.upper()}: {e}")
+        logger.exception(f"AI analysis failed for {resolved}: {e}")
         analysis = {
             "signal": "HOLD",
             "confidence": 0.0,
@@ -409,12 +517,12 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     try:
         crud.save_analysis_signal(
             db=db,
-            symbol=symbol.upper(),
+            symbol=resolved.upper(),
             signal=analysis.get("signal", "HOLD"),
             confidence=float(analysis.get("confidence", 0.0)),
             analysis_text=analysis.get("reasoning", str(analysis)),
         )
-        logger.info(f"✅ Signal saved: {symbol.upper()} → {analysis.get('signal')}")
+        logger.info(f"✅ Signal saved: {resolved.upper()} → {analysis.get('signal')}")
     except Exception as e:
         logger.warning(f"⚠️ Could not save signal: {e}")
 
@@ -429,19 +537,20 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
             for article in articles[:5]:
                 crud.save_news_article(
                     db=db,
-                    symbol=symbol.upper(),
+                    symbol=resolved.upper(),
                     headline=article.get("headline", article.get("title", "No headline")),
                     summary=article.get("summary", ""),
                     url=article.get("url", ""),
                     published_at=article.get("published_at", None),
                 )
-            logger.info(f"✅ News saved: {len(articles[:5])} articles for {symbol.upper()}")
+            logger.info(f"✅ News saved: {len(articles[:5])} articles for {resolved.upper()}")
         except Exception as e:
             logger.warning(f"⚠️ Could not save news: {e}")
 
-    # Step 5: Return Full Result
+    # Step 5: Return Full Result with Currency
     return {
-        "symbol": symbol.upper(),
+        "symbol": resolved.upper(),
+        "original_query": symbol.upper(),
         "stock_data": stock_data,
         "news": news_data,
         "news_warning": news_warning,
