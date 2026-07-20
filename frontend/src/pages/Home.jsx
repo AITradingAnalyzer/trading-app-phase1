@@ -44,8 +44,11 @@ function Home() {
           ? (rawConfidence * 100).toFixed(0)
           : Number(rawConfidence).toFixed(0)}%`;
 
+  // ✅ FIX: Also check for result?.news?.headlines
   const newsItems = Array.isArray(result?.news)
     ? result.news
+    : Array.isArray(result?.news?.headlines)   // <-- added this check
+    ? result.news.headlines
     : Array.isArray(result?.news?.articles)
     ? result.news.articles
     : [];
