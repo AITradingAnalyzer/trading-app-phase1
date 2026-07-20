@@ -6,7 +6,7 @@ import logging
 import threading
 from contextlib import asynccontextmanager
 
-import yfinance as yf  # ← ADD THIS IMPORT (for stock history)
+import yfinance as yf
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -18,10 +18,15 @@ from .market_data import get_stock_price
 from .news_fetcher import get_news
 from .ai_analyzer import analyze_stock_with_ai
 
+# ✅ Load .env file FIRST — before any code uses environment variables
+from dotenv import load_dotenv
+load_dotenv()
+
 # ─── Scheduler Imports ───
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
+# ─── Logging ───
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
@@ -103,7 +108,7 @@ def run_scheduled_analysis():
                 news_data = asyncio.run(get_news(symbol))
                 if isinstance(news_data, dict) and "error" in news_data:
                     logger.warning(f"⚠️ [Scheduler] News unavailable for {symbol}: {news_data['error']}")
-                    news_data = []  # ⬅️ Don't skip — proceed with empty news
+                    news_data = []
 
                 # Run AI analysis
                 analysis = asyncio.run(
@@ -381,13 +386,23 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     news_data = await get_news(symbol)
     if isinstance(news_data, dict) and "error" in news_data:
         news_warning = news_data["error"]
-        news_data = []  # ⬅️ Don't raise — proceed with empty news
+        news_data = []  # Don't raise — proceed with empty news
 
-    # Step 3: AI Analysis
-    analysis = await analyze_stock_with_ai(
-        symbol=symbol, stock_data=stock_data, news_data=news_data
-    )
-    analysis = normalize_analysis_result(analysis)
+    # Step 3: AI Analysis (✅ INDENTATION FIXED + try/except)
+    try:
+        analysis = await analyze_stock_with_ai(
+            symbol=symbol,
+            stock_data=stock_data,
+            news_data=news_data
+        )
+        analysis = normalize_analysis_result(analysis)
+    except Exception as e:
+        logger.exception(f"AI analysis failed for {symbol.upper()}: {e}")
+        analysis = {
+            "signal": "HOLD",
+            "confidence": 0.0,
+            "reasoning": f"AI analysis temporarily unavailable: {str(e)}"
+        }
 
     # Step 4a: Save Signal to DB
     try:
