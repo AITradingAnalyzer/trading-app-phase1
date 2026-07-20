@@ -59,13 +59,18 @@ function Home() {
 
       {result && (
         <div className="home-grid">
+
+          {/* ✅ Bug 1 Fixed: last_price instead of price */}
           <div className="info-card">
             <h3>Current Price</h3>
             <p className="price-value">
-              {result.stock_data?.price ? `$${result.stock_data.price}` : "N/A"}
+              {result.stock_data?.last_price
+                ? `$${result.stock_data.last_price}`
+                : "N/A"}
             </p>
           </div>
 
+          {/* ✅ Bug 3 Fixed: confidence multiplied by 100 */}
           <div className="info-card">
             <h3>AI Suggestion</h3>
             <div className="signal-badge">
@@ -76,7 +81,7 @@ function Home() {
               ) : null}
               {result.ai_analysis?.signal || "HOLD"}
             </div>
-            <p>Confidence: {result.ai_analysis?.confidence ?? 0}%</p>
+            <p>Confidence: {((result.ai_analysis?.confidence ?? 0) * 100).toFixed(0)}%</p>
           </div>
 
           <div className="info-card full-width">
@@ -84,14 +89,15 @@ function Home() {
             <p>{result.ai_analysis?.reasoning || "No reasoning available"}</p>
           </div>
 
+          {/* ✅ Bug 2 Fixed: result.news.headlines instead of result.news */}
           <div className="info-card full-width">
             <h3>
               <Newspaper size={18} style={{ display: "inline", marginRight: "8px" }} />
               Latest News
             </h3>
-            {Array.isArray(result.news) && result.news.length > 0 ? (
+            {Array.isArray(result.news?.headlines) && result.news.headlines.length > 0 ? (
               <ul className="news-list">
-                {result.news.slice(0, 5).map((item, index) => (
+                {result.news.headlines.slice(0, 5).map((item, index) => (
                   <li key={index} className="news-item">
                     <strong>{item.headline || item.title}</strong>
                     <p>{item.summary || "No summary available"}</p>
@@ -102,6 +108,7 @@ function Home() {
               <p>No news found.</p>
             )}
           </div>
+
         </div>
       )}
     </div>

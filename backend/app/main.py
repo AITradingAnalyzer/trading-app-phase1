@@ -212,6 +212,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "https://trading-app-phase1.netlify.app",
+        "https://aitradinganalyze.netlify.app", 
     ],
     allow_credentials=True,
     allow_methods=["*"],
