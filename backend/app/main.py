@@ -14,35 +14,29 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal
 from . import crud, models, schemas
-from .market_data import get_stock_price, resolve_ticker, get_currency_info  # ✅ NEW imports
+from .market_data import get_stock_price, resolve_ticker, get_currency_info
 from .news_fetcher import get_news
 from .ai_analyzer import analyze_stock_with_ai
 
-# ✅ Load .env file FIRST — before any code uses environment variables
 from dotenv import load_dotenv
 load_dotenv()
 
-# ─── Scheduler Imports ───
 from apscheduler.schedulers.background import BackgroundScheduler
 from apscheduler.triggers.interval import IntervalTrigger
 
-# ─── Logging ───
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# ─── Create all DB tables on startup ───
 Base.metadata.create_all(bind=engine)
 
 
 # ─── Helper: Normalize AI Analysis Result ──────────────────────
 def normalize_analysis_result(result):
-    """Ensure AI analysis result is always a dict with signal, confidence, reasoning."""
     if isinstance(result, dict):
         return result
 
     if isinstance(result, str):
         text = result.strip()
-        # Remove markdown code fences if present
         if text.startswith("```json"):
             text = text[7:]
         elif text.startswith("```"):
@@ -58,14 +52,12 @@ def normalize_analysis_result(result):
         except Exception:
             pass
 
-        # Fallback: Treat as reasoning text
         return {
             "signal": "HOLD",
             "confidence": 0.0,
             "reasoning": text
         }
 
-    # Fallback for any other type
     return {
         "signal": "HOLD",
         "confidence": 0.0,
@@ -73,11 +65,27 @@ def normalize_analysis_result(result):
     }
 
 
-# ─── NEW: Currency Detection ─────────────────────────────────────
-# ❌ REMOVED: get_currency() — now imported as get_currency_info from market_data
+# ══════════════════════════════════════════════════════════════
+# 🔧 FIX 1: Add this helper function for news query cleaning
+# ══════════════════════════════════════════════════════════════
+def get_news_query(original_symbol: str, resolved_symbol: str) -> str:
+    """
+    For news search, strip the .NS/.BO suffix.
+    NewsAPI searches for 'TCS', not 'TCS.NS'.
+    """
+    original = (original_symbol or "").upper().strip()
+    resolved = (resolved_symbol or "").upper().strip()
 
-# ─── NEW: Resolve Ticker (auto-add .NS fallback) ────────────────
-# ❌ REMOVED: resolve_ticker() — now imported from market_data
+    # If user typed 'TCS' (no dot), use that directly
+    if original and "." not in original:
+        return original
+
+    # If resolved to TCS.NS, strip the suffix
+    if resolved:
+        return resolved.split(".")[0]
+
+    return original or resolved
+
 
 # ─── Scheduler Setup ────────────────────────────────────────────
 scheduler = BackgroundScheduler()
@@ -88,7 +96,6 @@ RUN_SCHEDULER_ON_STARTUP = os.getenv("RUN_SCHEDULER_ON_STARTUP", "false").lower(
 
 
 def run_scheduled_analysis():
-    """Background task: analyze all watched symbols and save to DB."""
     from .database import SessionLocal as db_session
 
     symbols = os.getenv("WATCH_SYMBOLS", ",".join(DEFAULT_SYMBOLS)).split(",")
@@ -104,22 +111,22 @@ def run_scheduled_analysis():
             try:
                 import asyncio
 
-                # Resolve ticker first
                 resolved, source = resolve_ticker(symbol)
 
-                # Fetch stock data
                 stock_data = get_stock_price(resolved)
                 if "error" in stock_data:
                     logger.warning(f"⚠️ [Scheduler] Skipping {resolved}: {stock_data['error']}")
                     continue
 
-                # Fetch news — gracefully handle failure (e.g., 429)
-                news_data = asyncio.run(get_news(resolved))
+                # ══════════════════════════════════════════════════
+                # 🔧 FIX 2: Use cleaned query for news in scheduler
+                # ══════════════════════════════════════════════════
+                news_query = get_news_query(symbol, resolved)
+                news_data = asyncio.run(get_news(news_query))
                 if isinstance(news_data, dict) and "error" in news_data:
                     logger.warning(f"⚠️ [Scheduler] News unavailable for {resolved}: {news_data['error']}")
                     news_data = []
 
-                # Run AI analysis
                 analysis = asyncio.run(
                     analyze_stock_with_ai(
                         symbol=resolved,
@@ -129,7 +136,6 @@ def run_scheduled_analysis():
                 )
                 analysis = normalize_analysis_result(analysis)
 
-                # Save signal
                 crud.save_analysis_signal(
                     db=db,
                     symbol=resolved.upper(),
@@ -139,7 +145,6 @@ def run_scheduled_analysis():
                 )
                 logger.info(f"✅ [Scheduler] {resolved} → {analysis.get('signal', 'HOLD')}")
 
-                # Save news articles (only if we have them)
                 if news_data:
                     articles = news_data if isinstance(news_data, list) else news_data.get("articles", [])
                     for article in articles[:5]:
@@ -166,7 +171,6 @@ def run_scheduled_analysis():
 
 
 def start_scheduler():
-    """Start the background scheduler."""
     if scheduler.running:
         logger.warning("[Scheduler] Already running — skipping")
         return
@@ -182,7 +186,6 @@ def start_scheduler():
     scheduler.start()
     logger.info(f"🚀 [Scheduler] Started — running every {INTERVAL_HOURS} hour(s)")
 
-    # Optionally run once immediately at startup
     if RUN_SCHEDULER_ON_STARTUP:
         threading.Thread(target=run_scheduled_analysis, daemon=True).start()
         logger.info("⚡ [Scheduler] Immediate startup analysis triggered")
@@ -191,7 +194,6 @@ def start_scheduler():
 
 
 def stop_scheduler():
-    """Gracefully stop the scheduler."""
     if scheduler.running:
         scheduler.shutdown(wait=False)
         logger.info("🛑 [Scheduler] Stopped")
@@ -201,11 +203,9 @@ def stop_scheduler():
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    # Startup
     logger.info("🚀 Starting up — initializing scheduler...")
     start_scheduler()
     yield
-    # Shutdown
     logger.info("🛑 Shutting down — stopping scheduler...")
     stop_scheduler()
 
@@ -221,7 +221,7 @@ app.add_middleware(
     allow_origins=[
         "http://localhost:5173",
         "https://trading-app-phase1.netlify.app",
-        "https://aitradinganalyze.netlify.app", 
+        "https://aitradinganalyze.netlify.app",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -253,19 +253,16 @@ def root():
 
 @app.get("/signals", response_model=list[schemas.SignalOut])
 def read_signals(db: Session = Depends(get_db)):
-    """Get all signals from the database"""
     return crud.get_signals(db)
 
 
 @app.post("/signals", response_model=schemas.SignalOut)
 def create_signal(signal: schemas.SignalCreate, db: Session = Depends(get_db)):
-    """Manually create a signal"""
     return crud.create_signal(db, signal)
 
 
 @app.get("/signals/history/{symbol}")
 def signal_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
-    """Get signal history for a specific stock"""
     resolved, _ = resolve_ticker(symbol)
     history = crud.get_signal_history(db, symbol=resolved.upper(), limit=limit)
     if not history:
@@ -282,45 +279,31 @@ def signal_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
 
 @app.get("/stock/{symbol}")
 def stock_price(symbol: str):
-    """Get real-time stock price with currency info"""
     resolved, source = resolve_ticker(symbol)
-    
+
     stock_data = get_stock_price(resolved)
     if "error" in stock_data:
         raise HTTPException(status_code=404, detail=stock_data["error"])
-    
-    # Add currency info
-    currency_info = get_currency_info(resolved)  # ✅ Uses imported function
+
+    currency_info = get_currency_info(resolved)
     stock_data["currency"] = currency_info["currency"]
     stock_data["currency_symbol"] = currency_info["currency_symbol"]
     stock_data["resolved_symbol"] = resolved
-    
+
     return stock_data
 
 
 @app.get("/stock/history/{symbol}")
 def stock_history(symbol: str, period: str = "1mo"):
-    """
-    Get historical stock price data.
-    
-    Params:
-    - symbol: Stock symbol (e.g., AAPL, TSLA, TCS)
-    - period: Time period (1d, 1mo, 3mo, 1y, 5y, 10y, ytd, max)
-    
-    Returns:
-    - historical_data: List of {date, open, high, low, close, volume}
-    - currency + currency_symbol
-    """
     resolved, source = resolve_ticker(symbol)
-    
+
     try:
         stock = yf.Ticker(resolved)
         hist = stock.history(period=period)
-        
+
         if hist.empty:
             raise HTTPException(status_code=404, detail=f"No historical data found for {resolved}")
-        
-        # Format the data
+
         historical_data = []
         for date, row in hist.iterrows():
             historical_data.append({
@@ -331,9 +314,9 @@ def stock_history(symbol: str, period: str = "1mo"):
                 "close": round(float(row["Close"]), 2),
                 "volume": int(row["Volume"])
             })
-        
-        currency_info = get_currency_info(resolved)  # ✅ Uses imported function
-        
+
+        currency_info = get_currency_info(resolved)
+
         return {
             "symbol": resolved.upper(),
             "original_query": symbol.upper(),
@@ -354,16 +337,19 @@ def stock_history(symbol: str, period: str = "1mo"):
 # NEWS
 # ─────────────────────────────────────────
 
+# ══════════════════════════════════════════════════════════════
+# 🔧 FIX 3: Updated news route — uses cleaned query
+# ══════════════════════════════════════════════════════════════
 @app.get("/news/{symbol}")
 async def news_headlines(symbol: str):
     """Get latest news for a stock"""
     resolved, _ = resolve_ticker(symbol)
-    return await get_news(resolved)
+    news_query = get_news_query(symbol, resolved)   # ✅ Use cleaned name
+    return await get_news(news_query)
 
 
 @app.get("/news/history/{symbol}")
 def news_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
-    """Get saved news history for a stock"""
     resolved, _ = resolve_ticker(symbol)
     history = crud.get_news_history(db, symbol=resolved.upper(), limit=limit)
     if not history:
@@ -380,7 +366,6 @@ def news_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
 
 @app.get("/scheduler/status")
 def scheduler_status():
-    """Check if the background scheduler is running"""
     next_run = (
         str(scheduler.get_job("analyze_all_symbols").next_run_time)
         if scheduler.get_job("analyze_all_symbols")
@@ -398,19 +383,22 @@ def scheduler_status():
 # AI ANALYSIS (Main Endpoint)
 # ─────────────────────────────────────────
 
+# ══════════════════════════════════════════════════════════════
+# 🔧 FIX 4: Updated analyze route — uses cleaned query for news
+# ══════════════════════════════════════════════════════════════
 @app.get("/analyze/{symbol}")
 async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     """
     Full pipeline:
     1. Resolve ticker (auto .NS fallback for Indian stocks via market_data.py)
     2. Fetch real-time stock data
-    3. Fetch latest news
+    3. Fetch latest news (using cleaned query — e.g. TCS not TCS.NS)
     4. Run AI analysis
     5. Save signal + news to DB
     6. Return full result with currency info
     """
 
-    # Step 0: Resolve the ticker (auto-detect .NS using improved resolver)
+    # Step 0: Resolve the ticker
     resolved, source = resolve_ticker(symbol)
     logger.info(f"📈 Analyzing '{symbol}' → resolved to '{resolved}' (source: {source})")
 
@@ -420,17 +408,18 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=stock_data["error"])
 
     # Add currency info to stock_data
-    currency_info = get_currency_info(resolved)  # ✅ Uses imported function
+    currency_info = get_currency_info(resolved)
     stock_data["currency"] = currency_info["currency"]
     stock_data["currency_symbol"] = currency_info["currency_symbol"]
     stock_data["resolved_symbol"] = resolved
 
-    # Step 2: News Data — gracefully handle failure
+    # Step 2: News Data — use cleaned query (e.g. "TCS" not "TCS.NS")
     news_warning = None
-    news_data = await get_news(resolved)
+    news_query = get_news_query(symbol, resolved)   # ✅ Use cleaned name
+    news_data = await get_news(news_query)
     if isinstance(news_data, dict) and "error" in news_data:
         news_warning = news_data["error"]
-        news_data = []  # Don't raise — proceed with empty news
+        news_data = []
 
     # Step 3: AI Analysis
     try:
@@ -461,7 +450,7 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     except Exception as e:
         logger.warning(f"⚠️ Could not save signal: {e}")
 
-    # Step 4b: Save News Articles to DB (only if available)
+    # Step 4b: Save News Articles to DB
     if news_data:
         try:
             articles = (

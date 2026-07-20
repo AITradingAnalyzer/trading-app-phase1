@@ -4,6 +4,27 @@ import "../styles/Pages.css";
 
 const API_URL = import.meta.env.VITE_API_URL || "http://127.0.0.1:8000";
 
+// ══════════════════════════════════════════════════════
+// 🔧 FIX: Price formatter — prevents long decimals
+//         and handles NaN / null safely
+// ══════════════════════════════════════════════════════
+const formatPrice = (value, currencySymbol = "") => {
+  const num = Number(value);
+  if (!Number.isFinite(num)) return "N/A";
+
+  const formatted = num.toFixed(2);
+
+  // Indian Rupee — use en-IN comma style: ₹4,520.30
+  if (currencySymbol === "₹") {
+    const [intPart, decPart] = formatted.split(".");
+    const intFormatted = Number(intPart).toLocaleString("en-IN");
+    return `${currencySymbol}${intFormatted}.${decPart}`;
+  }
+
+  // All other currencies — standard 2 decimal places
+  return `${currencySymbol}${formatted}`;
+};
+
 function Home() {
   const [symbol, setSymbol] = useState("");
   const [loading, setLoading] = useState(false);
@@ -44,10 +65,9 @@ function Home() {
           ? (rawConfidence * 100).toFixed(0)
           : Number(rawConfidence).toFixed(0)}%`;
 
-  // ✅ FIX: Also check for result?.news?.headlines
   const newsItems = Array.isArray(result?.news)
     ? result.news
-    : Array.isArray(result?.news?.headlines)   // <-- added this check
+    : Array.isArray(result?.news?.headlines)
     ? result.news.headlines
     : Array.isArray(result?.news?.articles)
     ? result.news.articles
@@ -78,13 +98,18 @@ function Home() {
 
       {result && (
         <div className="home-grid">
+
           <div className="info-card">
             <h3>Current Price</h3>
+
+            {/* ✅ CHANGED: was direct string concat, now uses formatPrice */}
             <p className="price-value">
-              {result?.stock_data?.current_price != null
-                ? `${result?.stock_data?.currency_symbol || ""}${result?.stock_data?.current_price}`
-                : "N/A"}
+              {formatPrice(
+                result?.stock_data?.current_price,
+                result?.stock_data?.currency_symbol || ""
+              )}
             </p>
+
             <p>{result?.stock_data?.company_name || result?.symbol || ""}</p>
           </div>
 
@@ -129,6 +154,7 @@ function Home() {
               <p>No news found.</p>
             )}
           </div>
+
         </div>
       )}
     </div>
