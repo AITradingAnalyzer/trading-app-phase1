@@ -14,7 +14,7 @@ from sqlalchemy.orm import Session
 
 from .database import Base, engine, SessionLocal
 from . import crud, models, schemas
-from .market_data import get_stock_price
+from .market_data import get_stock_price, resolve_ticker, get_currency_info  # ✅ NEW imports
 from .news_fetcher import get_news
 from .ai_analyzer import analyze_stock_with_ai
 
@@ -74,78 +74,10 @@ def normalize_analysis_result(result):
 
 
 # ─── NEW: Currency Detection ─────────────────────────────────────
-def get_currency(symbol: str) -> dict:
-    """
-    Determine currency and symbol based on stock exchange suffix.
-    Returns dict: { "currency": str, "currency_symbol": str }
-    """
-    suffix_map = {
-        '.NS':   { 'currency': 'INR', 'currency_symbol': '₹' },
-        '.BO':   { 'currency': 'INR', 'currency_symbol': '₹' },
-        '.L':    { 'currency': 'GBP', 'currency_symbol': '£' },
-        '.TO':   { 'currency': 'CAD', 'currency_symbol': 'CA$' },
-        '.AX':   { 'currency': 'AUD', 'currency_symbol': 'A$' },
-        '.DE':   { 'currency': 'EUR', 'currency_symbol': '€' },
-        '.PA':   { 'currency': 'EUR', 'currency_symbol': '€' },
-        '.MI':   { 'currency': 'EUR', 'currency_symbol': '€' },
-        '.HK':   { 'currency': 'HKD', 'currency_symbol': 'HK$' },
-        '.SS':   { 'currency': 'CNY', 'currency_symbol': '¥' },
-        '.SZ':   { 'currency': 'CNY', 'currency_symbol': '¥' },
-        '.TW':   { 'currency': 'TWD', 'currency_symbol': 'NT$' },
-        '.SA':   { 'currency': 'SAR', 'currency_symbol': '﷼' },
-        '.SI':   { 'currency': 'SGD', 'currency_symbol': 'S$' },
-        '.KS':   { 'currency': 'KRW', 'currency_symbol': '₩' },
-        '.T':    { 'currency': 'JPY', 'currency_symbol': '¥' },
-    }
-    
-    # Check suffix
-    for suffix, info in suffix_map.items():
-        if symbol.upper().endswith(suffix):
-            return info
-    
-    # Default to USD
-    return { 'currency': 'USD', 'currency_symbol': '$' }
-
+# ❌ REMOVED: get_currency() — now imported as get_currency_info from market_data
 
 # ─── NEW: Resolve Ticker (auto-add .NS fallback) ────────────────
-def resolve_ticker(symbol: str) -> tuple:
-    """
-    Resolve a stock symbol to a valid ticker.
-    Returns: (resolved_symbol, source_label)
-    - If symbol contains a dot (e.g., 'TCS.NS'), use as-is.
-    - If symbol has no suffix, try it raw first, then fallback to .NS.
-    """
-    symbol = symbol.upper().strip()
-    
-    # If already has a suffix, use as-is
-    if '.' in symbol:
-        return symbol, 'direct'
-    
-    # Try raw symbol first (for US stocks like AAPL, TSLA)
-    try:
-        test = yf.Ticker(symbol)
-        hist = test.history(period="5d")
-        if not hist.empty:
-            logger.info(f"✅ '{symbol}' resolved as US ticker")
-            return symbol, 'us'
-    except Exception:
-        pass
-    
-    # Fallback: try with .NS suffix (Indian stocks)
-    fallback = f"{symbol}.NS"
-    try:
-        test = yf.Ticker(fallback)
-        hist = test.history(period="5d")
-        if not hist.empty:
-            logger.info(f"✅ '{symbol}' → resolved as Indian ticker '{fallback}'")
-            return fallback, 'india_fallback'
-    except Exception:
-        pass
-    
-    # Return original — let the caller handle error
-    logger.warning(f"⚠️ '{symbol}' could not be resolved — returning as-is")
-    return symbol, 'unresolved'
-
+# ❌ REMOVED: resolve_ticker() — now imported from market_data
 
 # ─── Scheduler Setup ────────────────────────────────────────────
 scheduler = BackgroundScheduler()
@@ -172,22 +104,25 @@ def run_scheduled_analysis():
             try:
                 import asyncio
 
+                # Resolve ticker first
+                resolved, source = resolve_ticker(symbol)
+
                 # Fetch stock data
-                stock_data = get_stock_price(symbol)
+                stock_data = get_stock_price(resolved)
                 if "error" in stock_data:
-                    logger.warning(f"⚠️ [Scheduler] Skipping {symbol}: {stock_data['error']}")
+                    logger.warning(f"⚠️ [Scheduler] Skipping {resolved}: {stock_data['error']}")
                     continue
 
                 # Fetch news — gracefully handle failure (e.g., 429)
-                news_data = asyncio.run(get_news(symbol))
+                news_data = asyncio.run(get_news(resolved))
                 if isinstance(news_data, dict) and "error" in news_data:
-                    logger.warning(f"⚠️ [Scheduler] News unavailable for {symbol}: {news_data['error']}")
+                    logger.warning(f"⚠️ [Scheduler] News unavailable for {resolved}: {news_data['error']}")
                     news_data = []
 
                 # Run AI analysis
                 analysis = asyncio.run(
                     analyze_stock_with_ai(
-                        symbol=symbol,
+                        symbol=resolved,
                         stock_data=stock_data,
                         news_data=news_data
                     )
@@ -197,12 +132,12 @@ def run_scheduled_analysis():
                 # Save signal
                 crud.save_analysis_signal(
                     db=db,
-                    symbol=symbol,
+                    symbol=resolved.upper(),
                     signal=analysis.get("signal", "HOLD"),
                     confidence=float(analysis.get("confidence", 0.0)),
                     analysis_text=analysis.get("reasoning", str(analysis))
                 )
-                logger.info(f"✅ [Scheduler] {symbol} → {analysis.get('signal', 'HOLD')}")
+                logger.info(f"✅ [Scheduler] {resolved} → {analysis.get('signal', 'HOLD')}")
 
                 # Save news articles (only if we have them)
                 if news_data:
@@ -210,7 +145,7 @@ def run_scheduled_analysis():
                     for article in articles[:5]:
                         crud.save_news_article(
                             db=db,
-                            symbol=symbol,
+                            symbol=resolved.upper(),
                             headline=article.get("headline", article.get("title", "No headline")),
                             summary=article.get("summary", ""),
                             url=article.get("url", ""),
@@ -352,11 +287,10 @@ def stock_price(symbol: str):
     
     stock_data = get_stock_price(resolved)
     if "error" in stock_data:
-        # If raw failed and we were in fallback mode, it's truly not found
         raise HTTPException(status_code=404, detail=stock_data["error"])
     
     # Add currency info
-    currency_info = get_currency(resolved)
+    currency_info = get_currency_info(resolved)  # ✅ Uses imported function
     stock_data["currency"] = currency_info["currency"]
     stock_data["currency_symbol"] = currency_info["currency_symbol"]
     stock_data["resolved_symbol"] = resolved
@@ -398,7 +332,7 @@ def stock_history(symbol: str, period: str = "1mo"):
                 "volume": int(row["Volume"])
             })
         
-        currency_info = get_currency(resolved)
+        currency_info = get_currency_info(resolved)  # ✅ Uses imported function
         
         return {
             "symbol": resolved.upper(),
@@ -423,7 +357,8 @@ def stock_history(symbol: str, period: str = "1mo"):
 @app.get("/news/{symbol}")
 async def news_headlines(symbol: str):
     """Get latest news for a stock"""
-    return await get_news(symbol)
+    resolved, _ = resolve_ticker(symbol)
+    return await get_news(resolved)
 
 
 @app.get("/news/history/{symbol}")
@@ -460,14 +395,14 @@ def scheduler_status():
 
 
 # ─────────────────────────────────────────
-# AI ANALYSIS (Main Endpoint) — UPDATED ✅
+# AI ANALYSIS (Main Endpoint)
 # ─────────────────────────────────────────
 
 @app.get("/analyze/{symbol}")
 async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     """
     Full pipeline:
-    1. Resolve ticker (auto .NS fallback for Indian stocks)
+    1. Resolve ticker (auto .NS fallback for Indian stocks via market_data.py)
     2. Fetch real-time stock data
     3. Fetch latest news
     4. Run AI analysis
@@ -475,7 +410,7 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
     6. Return full result with currency info
     """
 
-    # Step 0: Resolve the ticker (auto-detect .NS)
+    # Step 0: Resolve the ticker (auto-detect .NS using improved resolver)
     resolved, source = resolve_ticker(symbol)
     logger.info(f"📈 Analyzing '{symbol}' → resolved to '{resolved}' (source: {source})")
 
@@ -485,7 +420,7 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail=stock_data["error"])
 
     # Add currency info to stock_data
-    currency_info = get_currency(resolved)
+    currency_info = get_currency_info(resolved)  # ✅ Uses imported function
     stock_data["currency"] = currency_info["currency"]
     stock_data["currency_symbol"] = currency_info["currency_symbol"]
     stock_data["resolved_symbol"] = resolved
