@@ -1,9 +1,26 @@
 # app/market_data.py
 
+import math
 import logging
 import yfinance as yf
 
 logger = logging.getLogger(__name__)
+
+
+def sanitize_float(value):
+    """
+    Convert NaN / Infinity to None so JSON serialization never crashes.
+    yfinance often returns NaN for missing fields on non-US stocks.
+    """
+    if value is None:
+        return None
+    try:
+        f = float(value)
+        if math.isnan(f) or math.isinf(f):
+            return None
+        return f
+    except (TypeError, ValueError):
+        return None
 
 
 def get_currency_info(symbol: str):
@@ -11,7 +28,7 @@ def get_currency_info(symbol: str):
     suffix_map = {
         ".NS": {"currency": "INR", "currency_symbol": "₹"},
         ".BO": {"currency": "INR", "currency_symbol": "₹"},
-        ".L": {"currency": "GBP", "currency_symbol": "£"},
+        ".L":  {"currency": "GBP", "currency_symbol": "£"},
         ".TO": {"currency": "CAD", "currency_symbol": "CA$"},
         ".AX": {"currency": "AUD", "currency_symbol": "A$"},
         ".DE": {"currency": "EUR", "currency_symbol": "€"},
@@ -23,7 +40,7 @@ def get_currency_info(symbol: str):
         ".TW": {"currency": "TWD", "currency_symbol": "NT$"},
         ".SI": {"currency": "SGD", "currency_symbol": "S$"},
         ".KS": {"currency": "KRW", "currency_symbol": "₩"},
-        ".T": {"currency": "JPY", "currency_symbol": "¥"},
+        ".T":  {"currency": "JPY", "currency_symbol": "¥"},
     }
 
     symbol = symbol.upper().strip()
@@ -55,7 +72,7 @@ def resolve_ticker(symbol: str) -> tuple:
     if not symbol:
         return symbol, "empty"
 
-    # If user already entered exchange suffix, validate it directly
+    # If user already entered exchange suffix, validate and use directly
     if "." in symbol:
         if _has_price_history(symbol):
             logger.info(f"✅ '{symbol}' resolved directly")
@@ -63,11 +80,11 @@ def resolve_ticker(symbol: str) -> tuple:
         logger.warning(f"⚠️ '{symbol}' with suffix could not be resolved")
         return symbol, "unresolved"
 
-    # Dynamically try common possibilities
+    # Dynamically try common possibilities in priority order
     candidates = [
-        (symbol, "us"),
-        (f"{symbol}.NS", "india_nse"),
-        (f"{symbol}.BO", "india_bse"),
+        (symbol,          "us"),
+        (f"{symbol}.NS",  "india_nse"),
+        (f"{symbol}.BO",  "india_bse"),
     ]
 
     for candidate, source in candidates:
@@ -81,8 +98,8 @@ def resolve_ticker(symbol: str) -> tuple:
 
 def get_stock_price(symbol: str):
     """
-    Fetch stock price data — raw data only.
-    More robust for international tickers.
+    Fetch stock price data.
+    All float values are sanitized to prevent NaN JSON crash.
     """
     try:
         stock = yf.Ticker(symbol)
@@ -106,40 +123,33 @@ def get_stock_price(symbol: str):
             logger.warning(f"info failed for {symbol}: {e}")
             info = {}
 
-        current_price = round(float(hist["Close"].iloc[-1]), 2)
+        # ✅ sanitize_float wraps every numeric field
+        current_price = sanitize_float(hist["Close"].iloc[-1])
 
-        previous_close = (
-            fast_info.get("previousClose")
-            or info.get("previousClose")
+        previous_close = sanitize_float(
+            fast_info.get("previousClose") or info.get("previousClose")
         )
-        open_price = (
-            fast_info.get("open")
-            or info.get("open")
+        open_price = sanitize_float(
+            fast_info.get("open") or info.get("open")
         )
-        day_high = (
-            fast_info.get("dayHigh")
-            or info.get("dayHigh")
+        day_high = sanitize_float(
+            fast_info.get("dayHigh") or info.get("dayHigh")
         )
-        day_low = (
-            fast_info.get("dayLow")
-            or info.get("dayLow")
+        day_low = sanitize_float(
+            fast_info.get("dayLow") or info.get("dayLow")
         )
         volume = (
-            fast_info.get("lastVolume")
-            or info.get("volume")
+            int(fast_info.get("lastVolume") or info.get("volume") or 0) or None
         )
-        market_cap = (
-            fast_info.get("marketCap")
-            or info.get("marketCap")
+        market_cap = sanitize_float(
+            fast_info.get("marketCap") or info.get("marketCap")
         )
-        pe_ratio = info.get("trailingPE")
-        week_52_high = (
-            fast_info.get("yearHigh")
-            or info.get("fiftyTwoWeekHigh")
+        pe_ratio = sanitize_float(info.get("trailingPE"))
+        week_52_high = sanitize_float(
+            fast_info.get("yearHigh") or info.get("fiftyTwoWeekHigh")
         )
-        week_52_low = (
-            fast_info.get("yearLow")
-            or info.get("fiftyTwoWeekLow")
+        week_52_low = sanitize_float(
+            fast_info.get("yearLow") or info.get("fiftyTwoWeekLow")
         )
 
         company_name = (
