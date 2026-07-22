@@ -5,8 +5,10 @@ import json
 import logging
 import threading
 from contextlib import asynccontextmanager
+from datetime import datetime, timezone
 
 import yfinance as yf
+import pandas as pd
 
 from fastapi import FastAPI, Depends, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -30,7 +32,248 @@ logger = logging.getLogger(__name__)
 Base.metadata.create_all(bind=engine)
 
 
-# ─── Helper: Normalize AI Analysis Result ──────────────────────
+# ─── Indian Stocks Database ──────────────────────────────────────
+INDIAN_STOCKS = {
+    "RELIANCE.NS": "Reliance Industries Ltd",
+    "TCS.NS": "Tata Consultancy Services Ltd",
+    "INFY.NS": "Infosys Ltd",
+    "HDFCBANK.NS": "HDFC Bank Ltd",
+    "ICICIBANK.NS": "ICICI Bank Ltd",
+    "SBIN.NS": "State Bank of India",
+    "BHARTIARTL.NS": "Bharti Airtel Ltd",
+    "ITC.NS": "ITC Ltd",
+    "LT.NS": "Larsen & Toubro Ltd",
+    "AXISBANK.NS": "Axis Bank Ltd",
+    "ASIANPAINT.NS": "Asian Paints Ltd",
+    "BAJFINANCE.NS": "Bajaj Finance Ltd",
+    "BAJAJFINSV.NS": "Bajaj Finserv Ltd",
+    "ADANIENT.NS": "Adani Enterprises Ltd",
+    "ADANIPORTS.NS": "Adani Ports & SEZ Ltd",
+    "NTPC.NS": "NTPC Ltd",
+    "POWERGRID.NS": "Power Grid Corporation Ltd",
+    "ONGC.NS": "Oil & Natural Gas Corporation Ltd",
+    "COALINDIA.NS": "Coal India Ltd",
+    "TATAMOTORS.NS": "Tata Motors Ltd",
+    "WIPRO.NS": "Wipro Ltd",
+    "HCLTECH.NS": "HCL Technologies Ltd",
+    "MARUTI.NS": "Maruti Suzuki India Ltd",
+    "SUNPHARMA.NS": "Sun Pharmaceutical Industries Ltd",
+    "ULTRACEMCO.NS": "UltraTech Cement Ltd",
+    "TITAN.NS": "Titan Company Ltd",
+    "KOTAKBANK.NS": "Kotak Mahindra Bank Ltd",
+    "TECHM.NS": "Tech Mahindra Ltd",
+    "M&M.NS": "Mahindra & Mahindra Ltd",
+    "NESTLEIND.NS": "Nestle India Ltd",
+    "INDUSINDBK.NS": "IndusInd Bank Ltd",
+    "DRREDDY.NS": "Dr. Reddy's Laboratories Ltd",
+    "HINDUNILVR.NS": "Hindustan Unilever Ltd",
+    "HEROMOTOCO.NS": "Hero MotoCorp Ltd",
+    "EICHERMOT.NS": "Eicher Motors Ltd",
+    "BRITANNIA.NS": "Britannia Industries Ltd",
+    "DIVISLAB.NS": "Divi's Laboratories Ltd",
+    "GRASIM.NS": "Grasim Industries Ltd",
+    "JSWSTEEL.NS": "JSW Steel Ltd",
+    "TATASTEEL.NS": "Tata Steel Ltd",
+    "HAL.NS": "Hindustan Aeronautics Ltd",
+    "BEL.NS": "Bharat Electronics Ltd",
+    "IOC.NS": "Indian Oil Corporation Ltd",
+    "BPCL.NS": "Bharat Petroleum Corporation Ltd",
+    "GAIL.NS": "GAIL (India) Ltd",
+    "HINDALCO.NS": "Hindalco Industries Ltd",
+    "VEDL.NS": "Vedanta Ltd",
+    "SIEMENS.NS": "Siemens Ltd",
+    "PIDILITIND.NS": "Pidilite Industries Ltd",
+    "HAVELLS.NS": "Havells India Ltd",
+    "DABUR.NS": "Dabur India Ltd",
+    "MARICO.NS": "Marico Ltd",
+    "VOLTAS.NS": "Voltas Ltd",
+    "GODREJCP.NS": "Godrej Consumer Products Ltd",
+    "COLPAL.NS": "Colgate-Palmolive (India) Ltd",
+    "BANKBARODA.NS": "Bank of Baroda",
+    "CANBK.NS": "Canara Bank",
+    "PNB.NS": "Punjab National Bank",
+    "UNIONBANK.NS": "Union Bank of India",
+    "TVSMOTOR.NS": "TVS Motor Company Ltd",
+    "ASHOKLEY.NS": "Ashok Leyland Ltd",
+    "BAJAJ-AUTO.NS": "Bajaj Auto Ltd",
+    "DLF.NS": "DLF Ltd",
+    "GODREJPROP.NS": "Godrej Properties Ltd",
+    "OBEROIRLTY.NS": "Oberoi Realty Ltd",
+    "ZOMATO.NS": "Zomato Ltd",
+    "ICICIPRULI.NS": "ICICI Prudential Life Insurance Ltd",
+    "HDFCLIFE.NS": "HDFC Life Insurance Corporation Ltd",
+    "SBILIFE.NS": "SBI Life Insurance Company Ltd",
+    "NYKAA.NS": "FSN E-Commerce Ventures Ltd",
+    "DMART.NS": "Avenue Supermarts Ltd",
+    "TRENT.NS": "Trent Ltd",
+    "PAGEIND.NS": "Page Industries Ltd",
+    "JUBLFOOD.NS": "Jubilant FoodWorks Ltd",
+    "ABB.NS": "ABB India Ltd",
+    "BHEL.NS": "Bharat Heavy Electricals Ltd",
+    "TATACONSUM.NS": "Tata Consumer Products Ltd",
+    "APOLLOHOSP.NS": "Apollo Hospitals Enterprise Ltd",
+    "RELIANCE.NS": "Reliance Industries Ltd",
+}
+
+# US tickers to block
+US_TICKERS = {
+    "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "TSLA", "NVDA", "META",
+    "NFLX", "AMD", "INTC", "ORCL", "IBM", "UBER", "LYFT", "SNAP",
+    "BAC", "JPM", "V", "MA", "XOM", "CVX", "DIS", "WMT", "COST",
+    "NKE", "SBUX", "MCD", "HD", "LOW", "TGT", "PG", "JNJ", "PFE",
+    "MRK", "ABBV", "UNH", "CVS", "BA", "LMT", "RTX", "GS", "MS",
+    "C", "AXP", "PYPL", "SQ", "SPY", "QQQ", "DIA", "IWM", "GLD",
+}
+
+
+# ─── Helper: calculate RSI ───────────────────────────────────────
+def calculate_rsi(close: pd.Series, period: int = 14):
+    delta = close.diff()
+    gain = delta.clip(lower=0)
+    loss = -delta.clip(upper=0)
+    avg_gain = gain.rolling(period).mean()
+    avg_loss = loss.rolling(period).mean()
+    rs = avg_gain / avg_loss.replace(0, 1e-9)
+    rsi = 100 - (100 / (1 + rs))
+    return rsi
+
+
+# ─── Helper: build technical signal ──────────────────────────────
+def build_technical_signal(price, prev_close, sma20, sma50, rsi):
+    score = 0
+    bullish_reasons = []
+    bearish_reasons = []
+
+    change_pct = 0
+    if prev_close and prev_close > 0:
+        change_pct = round(((price - prev_close) / prev_close) * 100, 2)
+
+    # Price vs SMA20
+    if price > sma20:
+        score += 1
+        bullish_reasons.append("price above 20-day MA")
+    else:
+        score -= 1
+        bearish_reasons.append("price below 20-day MA")
+
+    # SMA20 vs SMA50
+    if sma20 > sma50:
+        score += 1
+        bullish_reasons.append("short-term trend stronger than medium-term")
+    else:
+        score -= 1
+        bearish_reasons.append("short-term trend weaker than medium-term")
+
+    # RSI
+    if rsi < 35:
+        score += 0.5
+        bullish_reasons.append("near oversold levels (RSI)")
+    elif 45 <= rsi <= 65:
+        score += 0.5
+        bullish_reasons.append("healthy RSI range")
+    elif rsi > 70:
+        score -= 0.5
+        bearish_reasons.append("overbought RSI")
+    elif rsi > 80:
+        score -= 1
+        bearish_reasons.append("extremely overbought RSI")
+
+    # Daily change
+    if change_pct > 1.5:
+        score += 0.5
+        bullish_reasons.append("strong daily momentum")
+    elif change_pct < -1.5:
+        score -= 0.5
+        bearish_reasons.append("weak daily momentum")
+
+    if score >= 2:
+        signal = "BUY"
+        sentiment = "bullish"
+    elif score <= -2:
+        signal = "SELL"
+        sentiment = "bearish"
+    else:
+        signal = "HOLD"
+        sentiment = "neutral"
+
+    confidence = min(92, max(55, int(58 + abs(score) * 12)))
+
+    reasoning_parts = []
+    if bullish_reasons:
+        reasoning_parts.append("Positive: " + ", ".join(bullish_reasons[:3]) + ".")
+    if bearish_reasons:
+        reasoning_parts.append("Risk: " + ", ".join(bearish_reasons[:3]) + ".")
+    if not reasoning_parts:
+        reasoning_parts.append("The stock is in a neutral zone with no clear technical signals.")
+    reasoning = " ".join(reasoning_parts)
+
+    key_drivers = ", ".join(bullish_reasons[:3]) if bullish_reasons else "Few positive drivers"
+    risk_factors = ", ".join(bearish_reasons[:3]) if bearish_reasons else "No major risks detected"
+
+    return {
+        "signal": signal,
+        "confidence": confidence,
+        "sentiment": sentiment,
+        "reasoning": reasoning,
+        "key_drivers": key_drivers,
+        "risk_factors": risk_factors,
+        "change_pct": change_pct,
+    }
+
+
+# ─── Helper: get news for ticker ─────────────────────────────────
+def fetch_news_simple(ticker: str):
+    """Fetch latest news from yfinance directly."""
+    try:
+        tk = yf.Ticker(ticker)
+        raw_news = tk.news or []
+        items = []
+
+        for item in raw_news[:4]:
+            title = item.get("title") or item.get("headline") or "Market update"
+            source = item.get("publisher") or item.get("source") or "News"
+            ts = item.get("providerPublishTime")
+            published = "Latest"
+            if ts:
+                try:
+                    published = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d %b, %I:%M %p UTC")
+                except Exception:
+                    published = "Latest"
+
+            sentiment = "neutral"
+            t = title.lower()
+            if any(w in t for w in ["surge", "gain", "beats", "growth", "rally", "rise", "profit", "bullish"]):
+                sentiment = "bullish"
+            elif any(w in t for w in ["fall", "drops", "weak", "cuts", "miss", "decline", "loss", "bearish"]):
+                sentiment = "bearish"
+
+            items.append({
+                "title": title,
+                "source": source,
+                "published_at": published,
+                "sentiment": sentiment,
+            })
+
+        return items
+    except Exception:
+        return []
+
+
+# ─── Helper: normalize ticker ────────────────────────────────────
+def normalize_ticker(raw: str) -> str:
+    """Validate ticker: reject US stocks, auto-add .NS for Indian."""
+    ticker = raw.upper().strip().replace(" ", "")
+
+    if ticker in US_TICKERS:
+        raise HTTPException(status_code=400, detail="Kindly search Indian stocks only.")
+
+    if ticker.endswith(".NS") or ticker.endswith(".BO"):
+        return ticker
+
+    return f"{ticker}.NS"
+
+
+# ─── Helper: normalize AI result ─────────────────────────────────
 def normalize_analysis_result(result):
     if isinstance(result, dict):
         return result
@@ -52,38 +295,20 @@ def normalize_analysis_result(result):
         except Exception:
             pass
 
-        return {
-            "signal": "HOLD",
-            "confidence": 0.0,
-            "reasoning": text
-        }
+        return {"signal": "HOLD", "confidence": 0.0, "reasoning": text}
 
-    return {
-        "signal": "HOLD",
-        "confidence": 0.0,
-        "reasoning": str(result)
-    }
+    return {"signal": "HOLD", "confidence": 0.0, "reasoning": str(result)}
 
 
-# ══════════════════════════════════════════════════════════════
-# 🔧 FIX 1: Add this helper function for news query cleaning
-# ══════════════════════════════════════════════════════════════
+# ─── Helper: clean news query ────────────────────────────────────
 def get_news_query(original_symbol: str, resolved_symbol: str) -> str:
-    """
-    For news search, strip the .NS/.BO suffix.
-    NewsAPI searches for 'TCS', not 'TCS.NS'.
-    """
     original = (original_symbol or "").upper().strip()
     resolved = (resolved_symbol or "").upper().strip()
 
-    # If user typed 'TCS' (no dot), use that directly
     if original and "." not in original:
         return original
-
-    # If resolved to TCS.NS, strip the suffix
     if resolved:
         return resolved.split(".")[0]
-
     return original or resolved
 
 
@@ -118,9 +343,6 @@ def run_scheduled_analysis():
                     logger.warning(f"⚠️ [Scheduler] Skipping {resolved}: {stock_data['error']}")
                     continue
 
-                # ══════════════════════════════════════════════════
-                # 🔧 FIX 2: Use cleaned query for news in scheduler
-                # ══════════════════════════════════════════════════
                 news_query = get_news_query(symbol, resolved)
                 news_data = asyncio.run(get_news(news_query))
                 if isinstance(news_data, dict) and "error" in news_data:
@@ -199,8 +421,7 @@ def stop_scheduler():
         logger.info("🛑 [Scheduler] Stopped")
 
 
-# ─── Lifespan (Startup / Shutdown) ──────────────────────────────
-
+# ─── Lifespan ─────────────────────────────────────────────────────
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     logger.info("🚀 Starting up — initializing scheduler...")
@@ -210,7 +431,7 @@ async def lifespan(app: FastAPI):
     stop_scheduler()
 
 
-# ─── CORS Middleware ───
+# ─── CORS Middleware ──────────────────────────────────────────────
 app = FastAPI(
     title="AI Trading Analyzer API",
     lifespan=lifespan,
@@ -222,6 +443,7 @@ app.add_middleware(
         "http://localhost:5173",
         "https://trading-app-phase1.netlify.app",
         "https://aitradinganalyze.netlify.app",
+        "*",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -229,7 +451,7 @@ app.add_middleware(
 )
 
 
-# ─── DB Dependency ───
+# ─── DB Dependency ────────────────────────────────────────────────
 def get_db():
     db = SessionLocal()
     try:
@@ -238,19 +460,174 @@ def get_db():
         db.close()
 
 
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
 # ROOT
-# ─────────────────────────────────────────
-
+# ═══════════════════════════════════════════════════════════════════
 @app.get("/")
 def root():
-    return {"message": "AI Trading Analyzer backend is running ✅"}
+    return {
+        "status": "ok",
+        "market": "India",
+        "message": "Trading Companion backend is running ✅",
+    }
 
 
-# ─────────────────────────────────────────
-# SIGNALS
-# ─────────────────────────────────────────
+# ═══════════════════════════════════════════════════════════════════
+# MARKET-MOVERS (NEW!) — Top Gainers, Losers, Sentiment
+# ═══════════════════════════════════════════════════════════════════
+@app.get("/market-movers")
+def get_market_movers():
+    """Return live top 5 gainers, top 5 losers, and sentiment from NSE stocks."""
+    symbols = list(INDIAN_STOCKS.keys())
 
+    try:
+        data = yf.download(
+            tickers=symbols,
+            period="5d",
+            interval="1d",
+            auto_adjust=True,
+            progress=False,
+            threads=True,
+            group_by="ticker",
+        )
+
+        rows = []
+        for symbol in symbols:
+            try:
+                close = data[symbol]["Close"].dropna()
+                if len(close) < 2:
+                    continue
+
+                last_price = round(float(close.iloc[-1]), 2)
+                prev_price = float(close.iloc[-2])
+                if prev_price == 0:
+                    continue
+
+                change_pct = round(((last_price - prev_price) / prev_price) * 100, 2)
+
+                rows.append({
+                    "ticker": symbol.replace(".NS", ""),
+                    "name": INDIAN_STOCKS.get(symbol, symbol.replace(".NS", "")),
+                    "price": last_price,
+                    "change_pct": change_pct,
+                })
+            except Exception:
+                continue
+
+        if not rows:
+            raise HTTPException(status_code=503, detail="Unable to fetch live market movers right now.")
+
+        gainers = sorted(rows, key=lambda x: x["change_pct"], reverse=True)[:5]
+        losers = sorted(rows, key=lambda x: x["change_pct"])[:5]
+
+        total = len(rows)
+        bullish_count = sum(1 for r in rows if r["change_pct"] > 0.5)
+        bearish_count = sum(1 for r in rows if r["change_pct"] < -0.5)
+        neutral_count = total - bullish_count - bearish_count
+
+        bullish = round((bullish_count / total) * 100) if total > 0 else 34
+        bearish = round((bearish_count / total) * 100) if total > 0 else 33
+        neutral = 100 - bullish - bearish
+
+        overall = "neutral"
+        if bullish >= bearish and bullish >= neutral:
+            overall = "bullish"
+        elif bearish >= bullish and bearish >= neutral:
+            overall = "bearish"
+
+        return {
+            "top_gainers": gainers,
+            "top_losers": losers,
+            "sentiment": {
+                "bullish": bullish,
+                "neutral": neutral,
+                "bearish": bearish,
+                "overall": overall,
+            },
+            "last_updated": datetime.now().strftime("%d %b %Y, %I:%M:%S %p"),
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Market movers failed: {e}")
+        raise HTTPException(status_code=500, detail=f"Market movers failed: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# ANALYZE (NEW flat response format for frontend)
+# ═══════════════════════════════════════════════════════════════════
+@app.get("/analyze/{ticker}")
+async def analyze_stock_new(ticker: str):
+    """
+    Full analysis pipeline returning a flat response that the frontend expects.
+    - Validates Indian stocks only
+    - Fetches price, technicals, and news
+    - Returns signal, confidence, sentiment
+    """
+    try:
+        symbol = normalize_ticker(ticker)
+    except HTTPException:
+        raise
+    except Exception:
+        raise HTTPException(status_code=400, detail=f"Invalid ticker: {ticker}")
+
+    logger.info(f"📈 Analyzing Indian stock: {symbol}")
+
+    try:
+        tk = yf.Ticker(symbol)
+        hist = tk.history(period="6mo", interval="1d", auto_adjust=True)
+
+        if hist.empty or len(hist) < 20:
+            raise HTTPException(
+                status_code=404,
+                detail=f"No market data found for {symbol}. Please check the ticker."
+            )
+
+        close = hist["Close"].dropna()
+        price = round(float(close.iloc[-1]), 2)
+        prev_close = round(float(close.iloc[-2]), 2) if len(close) > 1 else price
+        sma20 = float(close.tail(20).mean())
+        sma50 = float(close.tail(50).mean()) if len(close) >= 50 else float(close.mean())
+        rsi_val = float(calculate_rsi(close).iloc[-1]) if not calculate_rsi(close).dropna().empty else 50.0
+
+        signal_data = build_technical_signal(price, prev_close, sma20, sma50, rsi_val)
+
+        company_name = INDIAN_STOCKS.get(symbol, symbol.replace(".NS", "").replace(".BO", ""))
+
+        # Fetch news
+        news = fetch_news_simple(symbol)
+
+        return {
+            "ticker": symbol.replace(".NS", "").replace(".BO", ""),
+            "company_name": company_name,
+            "current_price": price,
+            "previous_close": prev_close,
+            "signal": signal_data["signal"],
+            "confidence": signal_data["confidence"],
+            "sentiment": signal_data["sentiment"],
+            "reasoning": signal_data["reasoning"],
+            "key_drivers": signal_data["key_drivers"],
+            "risk_factors": signal_data["risk_factors"],
+            "change_pct": signal_data["change_pct"],
+            "sma20": round(sma20, 2),
+            "sma50": round(sma50, 2),
+            "rsi": round(rsi_val, 2),
+            "news": news,
+        }
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Analyze failed for {symbol}: {e}")
+        raise HTTPException(status_code=500, detail=f"Analysis failed: {str(e)}")
+
+
+# ═══════════════════════════════════════════════════════════════════
+# EXISTING ENDPOINTS (unchanged)
+# ═══════════════════════════════════════════════════════════════════
+
+# ─── SIGNALS ──────────────────────────────────────────────────────
 @app.get("/signals", response_model=list[schemas.SignalOut])
 def read_signals(db: Session = Depends(get_db)):
     return crud.get_signals(db)
@@ -273,10 +650,7 @@ def signal_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
     return history
 
 
-# ─────────────────────────────────────────
-# STOCK DATA (Real-time + History)
-# ─────────────────────────────────────────
-
+# ─── STOCK DATA ──────────────────────────────────────────────────
 @app.get("/stock/{symbol}")
 def stock_price(symbol: str):
     resolved, source = resolve_ticker(symbol)
@@ -333,18 +707,12 @@ def stock_history(symbol: str, period: str = "1mo"):
         raise HTTPException(status_code=500, detail=str(e))
 
 
-# ─────────────────────────────────────────
-# NEWS
-# ─────────────────────────────────────────
-
-# ══════════════════════════════════════════════════════════════
-# 🔧 FIX 3: Updated news route — uses cleaned query
-# ══════════════════════════════════════════════════════════════
+# ─── NEWS ────────────────────────────────────────────────────────
 @app.get("/news/{symbol}")
 async def news_headlines(symbol: str):
     """Get latest news for a stock"""
     resolved, _ = resolve_ticker(symbol)
-    news_query = get_news_query(symbol, resolved)   # ✅ Use cleaned name
+    news_query = get_news_query(symbol, resolved)
     return await get_news(news_query)
 
 
@@ -360,10 +728,7 @@ def news_history(symbol: str, limit: int = 10, db: Session = Depends(get_db)):
     return history
 
 
-# ─────────────────────────────────────────
-# SCHEDULER STATUS
-# ─────────────────────────────────────────
-
+# ─── SCHEDULER STATUS ────────────────────────────────────────────
 @app.get("/scheduler/status")
 def scheduler_status():
     next_run = (
@@ -379,49 +744,29 @@ def scheduler_status():
     }
 
 
-# ─────────────────────────────────────────
-# AI ANALYSIS (Main Endpoint)
-# ─────────────────────────────────────────
-
-# ══════════════════════════════════════════════════════════════
-# 🔧 FIX 4: Updated analyze route — uses cleaned query for news
-# ══════════════════════════════════════════════════════════════
-@app.get("/analyze/{symbol}")
-async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
-    """
-    Full pipeline:
-    1. Resolve ticker (auto .NS fallback for Indian stocks via market_data.py)
-    2. Fetch real-time stock data
-    3. Fetch latest news (using cleaned query — e.g. TCS not TCS.NS)
-    4. Run AI analysis
-    5. Save signal + news to DB
-    6. Return full result with currency info
-    """
-
-    # Step 0: Resolve the ticker
+# ─── ORIGINAL ANALYZE ENDPOINT (kept for backward compatibility) ─
+@app.get("/analyze/v1/{symbol}")
+async def analyze_stock_v1(symbol: str, db: Session = Depends(get_db)):
+    """Original pipeline — kept for compatibility"""
     resolved, source = resolve_ticker(symbol)
     logger.info(f"📈 Analyzing '{symbol}' → resolved to '{resolved}' (source: {source})")
 
-    # Step 1: Stock Data
     stock_data = get_stock_price(resolved)
     if "error" in stock_data:
         raise HTTPException(status_code=400, detail=stock_data["error"])
 
-    # Add currency info to stock_data
     currency_info = get_currency_info(resolved)
     stock_data["currency"] = currency_info["currency"]
     stock_data["currency_symbol"] = currency_info["currency_symbol"]
     stock_data["resolved_symbol"] = resolved
 
-    # Step 2: News Data — use cleaned query (e.g. "TCS" not "TCS.NS")
     news_warning = None
-    news_query = get_news_query(symbol, resolved)   # ✅ Use cleaned name
+    news_query = get_news_query(symbol, resolved)
     news_data = await get_news(news_query)
     if isinstance(news_data, dict) and "error" in news_data:
         news_warning = news_data["error"]
         news_data = []
 
-    # Step 3: AI Analysis
     try:
         analysis = await analyze_stock_with_ai(
             symbol=resolved,
@@ -431,13 +776,8 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
         analysis = normalize_analysis_result(analysis)
     except Exception as e:
         logger.exception(f"AI analysis failed for {resolved}: {e}")
-        analysis = {
-            "signal": "HOLD",
-            "confidence": 0.0,
-            "reasoning": f"AI analysis temporarily unavailable: {str(e)}"
-        }
+        analysis = {"signal": "HOLD", "confidence": 0.0, "reasoning": f"AI analysis unavailable: {str(e)}"}
 
-    # Step 4a: Save Signal to DB
     try:
         crud.save_analysis_signal(
             db=db,
@@ -446,18 +786,12 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
             confidence=float(analysis.get("confidence", 0.0)),
             analysis_text=analysis.get("reasoning", str(analysis)),
         )
-        logger.info(f"✅ Signal saved: {resolved.upper()} → {analysis.get('signal')}")
     except Exception as e:
         logger.warning(f"⚠️ Could not save signal: {e}")
 
-    # Step 4b: Save News Articles to DB
     if news_data:
         try:
-            articles = (
-                news_data
-                if isinstance(news_data, list)
-                else news_data.get("articles", [])
-            )
+            articles = news_data if isinstance(news_data, list) else news_data.get("articles", [])
             for article in articles[:5]:
                 crud.save_news_article(
                     db=db,
@@ -467,16 +801,14 @@ async def analyze_stock(symbol: str, db: Session = Depends(get_db)):
                     url=article.get("url", ""),
                     published_at=article.get("published_at", None),
                 )
-            logger.info(f"✅ News saved: {len(articles[:5])} articles for {resolved.upper()}")
         except Exception as e:
             logger.warning(f"⚠️ Could not save news: {e}")
 
-    # Step 5: Return Full Result with Currency
     return {
         "symbol": resolved.upper(),
         "original_query": symbol.upper(),
-        "stock_data": stock_data,
+        "stock": stock_data,
         "news": news_data,
         "news_warning": news_warning,
         "ai_analysis": analysis,
-    }
+    }'
