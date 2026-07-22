@@ -211,34 +211,38 @@ def build_technical_signal(price, prev_close, sma20, sma50, rsi):
 
 
 def fetch_news_simple(ticker: str) -> list:
-    """Fetch news directly from yfinance — improved parsing."""
+    """Fetch news directly from yfinance — strictly strings to avoid React crash."""
     try:
         raw = yf.Ticker(ticker).news or []
         items = []
-        for item in raw[:6]:  # fetch up to 6
-            # yfinance news structure varies — try multiple fields
-            title = (
+        for item in raw[:6]:
+            # Use .get() and force conversion to string
+            title_val = (
                 item.get("title")
                 or (item.get("content") or {}).get("title")
                 or item.get("headline")
                 or ""
             )
-            if not title:
-                continue  # skip items with no real title
+            # If title_val is a dict or list, this avoids the crash
+            title = str(title_val) if not isinstance(title_val, (str, bytes, type(None))) else (title_val or "")
+            
+            if not title or len(title) < 5:
+                continue
 
-            source = (
-                item.get("publisher")
-                or (item.get("content") or {}).get("provider")
-                or item.get("source")
-                or "News"
-            )
+            # Handle publisher (source) — often a dict in new yfinance versions
+            pub_data = item.get("publisher") or (item.get("content") or {}).get("provider") or "News"
+            if isinstance(pub_data, dict):
+                source = str(pub_data.get("name", "News"))
+            else:
+                source = str(pub_data)
+
             ts = item.get("providerPublishTime")
-            pub = "Latest"
+            pub_time = "Latest"
             if ts:
                 try:
-                    pub = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d %b, %I:%M %p UTC")
-                except Exception:
-                    pub = "Latest"
+                    pub_time = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d %b, %I:%M %p")
+                except:
+                    pub_time = "Latest"
 
             t = title.lower()
             sentiment = "neutral"
@@ -250,7 +254,7 @@ def fetch_news_simple(ticker: str) -> list:
             items.append({
                 "title": title,
                 "source": source,
-                "published_at": pub,
+                "published_at": pub_time,
                 "sentiment": sentiment,
             })
         return items

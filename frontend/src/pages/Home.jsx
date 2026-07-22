@@ -544,49 +544,51 @@ export default function Home() {
               </div>
 
               {Array.isArray(analysis.news) && analysis.news.length > 0 ? (
-                <div
-                  style={{
-                    display: 'grid',
-                    gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)',
-                    gap: '12px',
-                  }}
-                >
-                  {analysis.news.slice(0, 4).map((item, index) => (
-                    <div
-                      key={index}
-                      style={{
-                        background: '#f8fafc',
-                        border: '1px solid #e2e8f0',
-                        borderRadius: '12px',
-                        padding: '14px',
-                      }}
-                    >
-                      <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', lineHeight: 1.6, marginBottom: '8px' }}>
-                        {item.title}
-                      </div>
-                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-                          {item.source} · {item.published_at}
-                        </span>
-                        <span
-                          style={{
-                            fontSize: '11px',
-                            fontWeight: '800',
-                            color: sentimentColor(item.sentiment),
-                            textTransform: 'capitalize',
-                          }}
-                        >
-                          {item.sentiment}
-                        </span>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              ) : (
-                <div style={{ fontSize: '13px', color: '#64748b' }}>
-                  No recent news available for this stock right now.
-                </div>
-              )}
+  <div
+    style={{
+      display: 'grid',
+      gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)',
+      gap: '12px',
+    }}
+  >
+    {analysis.news.slice(0, 4).map((item, index) => (
+      <div
+        key={index}
+        style={{
+          background: '#f8fafc',
+          border: '1px solid #e2e8f0',
+          borderRadius: '12px',
+          padding: '14px',
+        }}
+      >
+        {/* Force string conversion here just in case */}
+        <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', lineHeight: 1.6, marginBottom: '8px' }}>
+          {typeof item.title === 'string' ? item.title : 'Market Update'}
+        </div>
+        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+          <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+            {typeof item.source === 'string' ? item.source : 'News'} · {item.published_at}
+          </span>
+          <span
+            style={{
+              fontSize: '11px',
+              fontWeight: '800',
+              color: sentimentColor(item.sentiment),
+              textTransform: 'capitalize',
+            }}
+          >
+            {item.sentiment}
+          </span>
+        </div>
+      </div>
+    ))}
+  </div>
+) : (
+  <div style={{ fontSize: '13px', color: '#64748b' }}>
+    No recent news available for this stock right now.
+  </div>
+)}
+
             </div>
           </section>
         )}
