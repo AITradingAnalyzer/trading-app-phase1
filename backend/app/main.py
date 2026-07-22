@@ -18,7 +18,10 @@ from .database import Base, engine, SessionLocal
 from . import crud, models, schemas
 from .market_data import get_stock_price, resolve_ticker, get_currency_info
 from .news_fetcher import get_news
-from .ai_analyzer import analyze_stock_with_ai
+try:
+    from .ai_analyzer import analyze_stock_with_ai
+except ImportError:
+    from .ai_analyzer import analyze_with_ai as analyze_stock_with_ai
 
 from dotenv import load_dotenv
 load_dotenv()
