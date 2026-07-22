@@ -332,7 +332,7 @@ export default function Home() {
             color: 'rgba(255,255,255,0.85)',
           }}
         >
-          Analyze Indian stocks, check live top gainers and losers, and track market sentiment in a clean and simple UI.
+          Analyze Indian stocks, check live top gainers and losers, and track market sentiment.
         </p>
       </section>
 

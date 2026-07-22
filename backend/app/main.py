@@ -211,36 +211,51 @@ def build_technical_signal(price, prev_close, sma20, sma50, rsi):
 
 
 def fetch_news_simple(ticker: str) -> list:
-    """Fetch news directly from yfinance."""
+    """Fetch news directly from yfinance — improved parsing."""
     try:
         raw = yf.Ticker(ticker).news or []
         items = []
-        for item in raw[:4]:
-            title  = item.get("title") or item.get("headline") or "Market update"
-            source = item.get("publisher") or item.get("source") or "News"
-            ts     = item.get("providerPublishTime")
-            pub    = "Latest"
+        for item in raw[:6]:  # fetch up to 6
+            # yfinance news structure varies — try multiple fields
+            title = (
+                item.get("title")
+                or (item.get("content") or {}).get("title")
+                or item.get("headline")
+                or ""
+            )
+            if not title:
+                continue  # skip items with no real title
+
+            source = (
+                item.get("publisher")
+                or (item.get("content") or {}).get("provider")
+                or item.get("source")
+                or "News"
+            )
+            ts = item.get("providerPublishTime")
+            pub = "Latest"
             if ts:
                 try:
                     pub = datetime.fromtimestamp(ts, tz=timezone.utc).strftime("%d %b, %I:%M %p UTC")
                 except Exception:
                     pub = "Latest"
 
-            t         = title.lower()
+            t = title.lower()
             sentiment = "neutral"
-            if any(w in t for w in ["surge", "gain", "beats", "growth", "rally", "rise", "profit", "bullish"]):
+            if any(w in t for w in ["surge", "gain", "beats", "growth", "rally", "rise", "profit", "bullish", "up "]):
                 sentiment = "bullish"
-            elif any(w in t for w in ["fall", "drops", "weak", "cuts", "miss", "decline", "loss", "bearish"]):
+            elif any(w in t for w in ["fall", "drops", "weak", "cuts", "miss", "decline", "loss", "bearish", "down "]):
                 sentiment = "bearish"
 
             items.append({
-                "title":        title,
-                "source":       source,
+                "title": title,
+                "source": source,
                 "published_at": pub,
-                "sentiment":    sentiment,
+                "sentiment": sentiment,
             })
         return items
-    except Exception:
+    except Exception as e:
+        logger.warning(f"News fetch error for {ticker}: {e}")
         return []
 
 
