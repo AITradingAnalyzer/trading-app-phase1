@@ -10,7 +10,7 @@ from datetime import datetime, timezone
 import yfinance as yf
 import pandas as pd
 
-from fastapi import FastAPI, Depends, HTTPException
+from fastapi import FastAPI, Depends, HTTPException, Query
 from fastapi.middleware.cors import CORSMiddleware
 from sqlalchemy.orm import Session
 
@@ -59,71 +59,33 @@ INDIAN_STOCKS = {
     "TATAMOTORS.NS": "Tata Motors Ltd",
     "WIPRO.NS":      "Wipro Ltd",
     "HCLTECH.NS":    "HCL Technologies Ltd",
-    "MARUTI.NS":     "Maruti Suzuki India Ltd",
-    "SUNPHARMA.NS":  "Sun Pharmaceutical Industries Ltd",
-    "ULTRACEMCO.NS": "UltraTech Cement Ltd",
-    "TITAN.NS":      "Titan Company Ltd",
-    "KOTAKBANK.NS":  "Kotak Mahindra Bank Ltd",
     "TECHM.NS":      "Tech Mahindra Ltd",
-    "NESTLEIND.NS":  "Nestle India Ltd",
-    "INDUSINDBK.NS": "IndusInd Bank Ltd",
-    "DRREDDY.NS":    "Dr. Reddy's Laboratories Ltd",
-    "HINDUNILVR.NS": "Hindustan Unilever Ltd",
-    "HEROMOTOCO.NS": "Hero MotoCorp Ltd",
-    "EICHERMOT.NS":  "Eicher Motors Ltd",
-    "BRITANNIA.NS":  "Britannia Industries Ltd",
-    "DIVISLAB.NS":   "Divi's Laboratories Ltd",
-    "GRASIM.NS":     "Grasim Industries Ltd",
+    "MARUTI.NS":     "Maruti Suzuki India Ltd",
+    "TATSTEEL.NS":   "Tata Steel Ltd",
     "JSWSTEEL.NS":   "JSW Steel Ltd",
-    "TATASTEEL.NS":  "Tata Steel Ltd",
-    "HAL.NS":        "Hindustan Aeronautics Ltd",
-    "BEL.NS":        "Bharat Electronics Ltd",
-    "IOC.NS":        "Indian Oil Corporation Ltd",
-    "BPCL.NS":       "Bharat Petroleum Corporation Ltd",
-    "GAIL.NS":       "GAIL (India) Ltd",
-    "HINDALCO.NS":   "Hindalco Industries Ltd",
-    "VEDL.NS":       "Vedanta Ltd",
-    "SIEMENS.NS":    "Siemens Ltd",
-    "PIDILITIND.NS": "Pidilite Industries Ltd",
-    "HAVELLS.NS":    "Havells India Ltd",
-    "DABUR.NS":      "Dabur India Ltd",
-    "MARICO.NS":     "Marico Ltd",
-    "COLPAL.NS":     "Colgate-Palmolive (India) Ltd",
-    "BANKBARODA.NS": "Bank of Baroda",
-    "CANBK.NS":      "Canara Bank",
-    "PNB.NS":        "Punjab National Bank",
-    "TVSMOTOR.NS":   "TVS Motor Company Ltd",
-    "ASHOKLEY.NS":   "Ashok Leyland Ltd",
-    "DLF.NS":        "DLF Ltd",
-    "ZOMATO.NS":     "Zomato Ltd",
-    "NYKAA.NS":      "FSN E-Commerce Ventures Ltd",
+    "SUNPHARMA.NS":  "Sun Pharmaceutical Industries Ltd",
+    "DRREDDY.NS":    "Dr. Reddy's Laboratories Ltd",
+    "CIPLA.NS":      "Cipla Ltd",
+    "ULTRACEMCO.NS": "UltraTech Cement Ltd",
+    "HINDUNILVR.NS": "Hindustan Unilever Ltd",
+    "NESTLEIND.NS":  "Nestlé India Ltd",
+    "BRITANNIA.NS":  "Britannia Industries Ltd",
+    "TITAN.NS":      "Titan Company Ltd",
     "DMART.NS":      "Avenue Supermarts Ltd",
     "TRENT.NS":      "Trent Ltd",
+    "ZOMATO.NS":     "Zomato Ltd",
     "PAGEIND.NS":    "Page Industries Ltd",
-    "JUBLFOOD.NS":   "Jubilant FoodWorks Ltd",
-    "ABB.NS":        "ABB India Ltd",
-    "BHEL.NS":       "Bharat Heavy Electricals Ltd",
-    "TATACONSUM.NS": "Tata Consumer Products Ltd",
-    "APOLLOHOSP.NS": "Apollo Hospitals Enterprise Ltd",
-    "BAJAJ-AUTO.NS": "Bajaj Auto Ltd",
-    "GODREJCP.NS":   "Godrej Consumer Products Ltd",
-    "GODREJPROP.NS": "Godrej Properties Ltd",
-    "OBEROIRLTY.NS": "Oberoi Realty Ltd",
-    "ICICIPRULI.NS": "ICICI Prudential Life Insurance Ltd",
-    "HDFCLIFE.NS":   "HDFC Life Insurance Corporation Ltd",
-    "SBILIFE.NS":    "SBI Life Insurance Company Ltd",
-    "VOLTAS.NS":     "Voltas Ltd",
 }
 
-# ─── US Tickers to Block ──────────────────────────────────────────
+# ─── US Tickers Blocklist ─────────────────────────────────────────
 US_TICKERS = {
-    "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "TSLA", "NVDA", "META",
-    "NFLX", "AMD", "INTC", "ORCL", "IBM", "UBER", "LYFT", "SNAP",
-    "BAC", "JPM", "V", "MA", "XOM", "CVX", "DIS", "WMT", "COST",
-    "NKE", "SBUX", "MCD", "HD", "LOW", "TGT", "PG", "JNJ", "PFE",
-    "MRK", "ABBV", "UNH", "CVS", "BA", "LMT", "RTX", "GS", "MS",
-    "C", "AXP", "PYPL", "SQ", "SPY", "QQQ", "DIA", "IWM", "GLD",
-    "COIN", "HOOD", "SOFI", "PLTR", "RBLX", "ABNB", "DASH", "RIVN",
+    "AAPL", "MSFT", "GOOGL", "GOOG", "AMZN", "META", "TSLA",
+    "NVDA", "JPM", "V", "WMT", "JNJ", "MA", "PG", "UNH", "HD",
+    "BAC", "DIS", "ADBE", "CRM", "NFLX", "CMCSA", "XOM", "VZ",
+    "KO", "PEP", "ABT", "MRK", "ORCL", "COST", "AMD", "INTC",
+    "QCOM", "IBM", "BA", "F", "GM", "GE", "CAT", "MMM", "T",
+    "NKE", "MCD", "SBUX", "UPS", "DOW", "CSCO", "PYPL", "UBER",
+    "SNAP", "SPOT", "BABA", "TCEHY",
 }
 
 
@@ -136,6 +98,55 @@ def calculate_rsi(close: pd.Series, period: int = 14) -> pd.Series:
     avg_loss = loss.rolling(period).mean()
     rs       = avg_gain / avg_loss.replace(0, 1e-9)
     return 100 - (100 / (1 + rs))
+
+
+def build_justification(price, prev_close, sma20, sma50, rsi, signal):
+    """Build a structured list of bullet-point justifications + timeframe."""
+    bullets = []
+    timeframe = "Medium-term: 2–4 weeks"
+
+    # Price vs MA
+    if price > sma20:
+        bullets.append(f"Price (₹{price}) is trading **above** the 20-day MA (₹{sma20:.2f}) — short-term uptrend.")
+    else:
+        bullets.append(f"Price (₹{price}) is trading **below** the 20-day MA (₹{sma20:.2f}) — short-term weakness.")
+
+    # MA crossover
+    if sma20 > sma50:
+        bullets.append(f"20-day MA (₹{sma20:.2f}) is **above** 50-day MA (₹{sma50:.2f}) — bullish crossover.")
+    else:
+        bullets.append(f"20-day MA (₹{sma20:.2f}) is **below** 50-day MA (₹{sma50:.2f}) — bearish crossover.")
+
+    # RSI
+    if rsi < 35:
+        bullets.append(f"RSI at {rsi:.1f} — stock is in **oversold** territory (potential bounce).")
+    elif rsi > 70:
+        bullets.append(f"RSI at {rsi:.1f} — stock is in **overbought** territory (caution advised).")
+    elif 45 <= rsi <= 65:
+        bullets.append(f"RSI at {rsi:.1f} — in **healthy neutral** range, no extreme momentum.")
+    else:
+        bullets.append(f"RSI at {rsi:.1f} — slightly weak momentum.")
+
+    # Daily change
+    change_pct = 0.0
+    if prev_close and prev_close > 0:
+        change_pct = round(((price - prev_close) / prev_close) * 100, 2)
+    if change_pct > 1.5:
+        bullets.append(f"Daily change of {change_pct:+.2f}% — **strong upward** momentum today.")
+    elif change_pct < -1.5:
+        bullets.append(f"Daily change of {change_pct:+.2f}% — **strong downward** momentum today.")
+    else:
+        bullets.append(f"Daily change of {change_pct:+.2f}% — relatively stable session.")
+
+    # Timeframe logic based on signal
+    if signal == "BUY":
+        timeframe = "Short-term: 3–10 days | Medium-term: 2–6 weeks"
+    elif signal == "SELL":
+        timeframe = "Consider exiting within 1–5 days | Avoid fresh positions"
+    else:
+        timeframe = "Hold and reassess in 1–2 weeks | Await clearer signals"
+
+    return bullets, timeframe
 
 
 def build_technical_signal(price, prev_close, sma20, sma50, rsi):
@@ -216,20 +227,17 @@ def fetch_news_simple(ticker: str) -> list:
         raw = yf.Ticker(ticker).news or []
         items = []
         for item in raw[:6]:
-            # Use .get() and force conversion to string
             title_val = (
                 item.get("title")
                 or (item.get("content") or {}).get("title")
                 or item.get("headline")
                 or ""
             )
-            # If title_val is a dict or list, this avoids the crash
             title = str(title_val) if not isinstance(title_val, (str, bytes, type(None))) else (title_val or "")
             
             if not title or len(title) < 5:
                 continue
 
-            # Handle publisher (source) — often a dict in new yfinance versions
             pub_data = item.get("publisher") or (item.get("content") or {}).get("provider") or "News"
             if isinstance(pub_data, dict):
                 source = str(pub_data.get("name", "News"))
@@ -442,6 +450,31 @@ def root():
 
 
 # ═════════════════════════════════════════════════════════════════
+# /search — autocomplete for stock names & tickers
+# ═════════════════════════════════════════════════════════════════
+@app.get("/search")
+def search_stocks(q: str = Query("", min_length=1)):
+    """Return up to 5 matching stocks by ticker or company name (prefix match)."""
+    query = q.strip().upper()
+    if not query:
+        return {"results": []}
+
+    matches = []
+    for ticker, name in INDIAN_STOCKS.items():
+        short_ticker = ticker.replace(".NS", "").replace(".BO", "")
+        # Match by ticker code or company name
+        if short_ticker.startswith(query) or name.upper().startswith(query):
+            matches.append({
+                "ticker": short_ticker,
+                "name": name,
+            })
+        if len(matches) >= 5:
+            break
+
+    return {"results": matches}
+
+
+# ═════════════════════════════════════════════════════════════════
 # /market-movers  — live top gainers, losers, sentiment
 # ═════════════════════════════════════════════════════════════════
 @app.get("/market-movers")
@@ -548,22 +581,29 @@ async def analyze_stock_new(ticker: str):
         company   = INDIAN_STOCKS.get(symbol, symbol.replace(".NS", "").replace(".BO", ""))
         news      = fetch_news_simple(symbol)
 
+        # Build structured justification + timeframe
+        justification, timeframe = build_justification(
+            price, prev, sma20, sma50, rsi_val, sig_data["signal"]
+        )
+
         return {
-            "ticker":        symbol.replace(".NS", "").replace(".BO", ""),
-            "company_name":  company,
-            "current_price": price,
+            "ticker":         symbol.replace(".NS", "").replace(".BO", ""),
+            "company_name":   company,
+            "current_price":  price,
             "previous_close": prev,
-            "signal":        sig_data["signal"],
-            "confidence":    sig_data["confidence"],
-            "sentiment":     sig_data["sentiment"],
-            "reasoning":     sig_data["reasoning"],
-            "key_drivers":   sig_data["key_drivers"],
-            "risk_factors":  sig_data["risk_factors"],
-            "change_pct":    sig_data["change_pct"],
-            "sma20":         round(sma20, 2),
-            "sma50":         round(sma50, 2),
-            "rsi":           round(rsi_val, 2),
-            "news":          news,
+            "signal":         sig_data["signal"],
+            "confidence":     sig_data["confidence"],
+            "sentiment":      sig_data["sentiment"],
+            "reasoning":      sig_data["reasoning"],
+            "key_drivers":    sig_data["key_drivers"],
+            "risk_factors":   sig_data["risk_factors"],
+            "change_pct":     sig_data["change_pct"],
+            "sma20":          round(sma20, 2),
+            "sma50":          round(sma50, 2),
+            "rsi":            round(rsi_val, 2),
+            "news":           news,
+            "justification":  justification,
+            "timeframe":      timeframe,
         }
 
     except HTTPException:
@@ -606,34 +646,35 @@ def stock_price(symbol: str):
     stock_data["currency"]          = currency_info["currency"]
     stock_data["currency_symbol"]   = currency_info["currency_symbol"]
     stock_data["resolved_symbol"]   = resolved
+    stock_data["source"]            = source
     return stock_data
 
 
 @app.get("/stock/history/{symbol}")
-def stock_history(symbol: str, period: str = "1mo"):
-    resolved, source = resolve_ticker(symbol)
+def stock_history(symbol: str, range: str = "1mo"):
+    resolved, _ = resolve_ticker(symbol)
     try:
-        stock = yf.Ticker(resolved)
-        hist  = stock.history(period=period)
+        tk = yf.Ticker(resolved)
+        hist = tk.history(period=range, interval="1d", auto_adjust=True)
         if hist.empty:
-            raise HTTPException(status_code=404, detail=f"No historical data for {resolved}")
+            raise HTTPException(status_code=404, detail=f"No data for {resolved} in range '{range}'")
 
         historical_data = []
-        for date, row in hist.iterrows():
+        for idx, row in hist.iterrows():
             historical_data.append({
-                "date":   date.strftime("%Y-%m-%d"),
-                "open":   round(float(row["Open"]),   2),
-                "high":   round(float(row["High"]),   2),
-                "low":    round(float(row["Low"]),    2),
-                "close":  round(float(row["Close"]),  2),
+                "date":  idx.strftime("%Y-%m-%d"),
+                "open":  round(float(row["Open"]), 2),
+                "high":  round(float(row["High"]), 2),
+                "low":   round(float(row["Low"]), 2),
+                "close": round(float(row["Close"]), 2),
                 "volume": int(row["Volume"]),
             })
 
+        stock_data = get_stock_price(resolved)
         currency_info = get_currency_info(resolved)
         return {
-            "symbol":          resolved.upper(),
-            "original_query":  symbol.upper(),
-            "period":          period,
+            "symbol":          resolved,
+            "company_name":    INDIAN_STOCKS.get(resolved, resolved.split(".")[0]),
             "currency":        currency_info["currency"],
             "currency_symbol": currency_info["currency_symbol"],
             "historical_data": historical_data,

@@ -1,63 +1,33 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import {
+  Zap,
   TrendingUp,
   TrendingDown,
-  BarChart2,
   RefreshCw,
-  Zap,
-  AlertCircle,
-  DollarSign,
+  BarChart2,
   Newspaper,
+  Search,
 } from 'lucide-react';
 
-const API_URL = (import.meta.env.VITE_API_URL || '').replace(/\/$/, '');
+const API_URL = import.meta.env.VITE_API_URL || '';
 
-const BLOCKED_US_TICKERS = new Set([
-  'AAPL', 'MSFT', 'GOOGL', 'GOOG', 'AMZN', 'TSLA', 'NVDA', 'META',
-  'NFLX', 'AMD', 'INTC', 'ORCL', 'IBM', 'UBER', 'LYFT', 'SNAP',
-  'BAC', 'JPM', 'V', 'MA', 'XOM', 'CVX', 'DIS', 'WMT',
-]);
-
-const cardStyle = {
-  background: '#ffffff',
-  border: '1px solid #e2e8f0',
-  borderRadius: '16px',
-  padding: '20px',
-  boxShadow: '0 2px 10px rgba(0,0,0,0.05)',
-};
-
-function badgeStyle(signal) {
-  if (signal === 'BUY') {
-    return { bg: '#dcfce7', color: '#15803d', border: '#bbf7d0' };
-  }
-  if (signal === 'SELL') {
-    return { bg: '#fee2e2', color: '#dc2626', border: '#fecaca' };
-  }
-  return { bg: '#fef3c7', color: '#d97706', border: '#fde68a' };
-}
-
-function sentimentColor(value) {
-  const v = String(value || '').toLowerCase();
-  if (v === 'bullish') return '#15803d';
-  if (v === 'bearish') return '#dc2626';
+function sentimentColor(s) {
+  if (!s) return '#64748b';
+  const val = typeof s === 'string' ? s.toLowerCase() : 'neutral';
+  if (val === 'bullish' || val === 'positive' || val === 'buy') return '#16a34a';
+  if (val === 'bearish' || val === 'negative' || val === 'sell') return '#dc2626';
   return '#d97706';
 }
 
-function formatINR(value) {
-  if (value === null || value === undefined || value === '') return 'N/A';
-  const num = Number(value);
-  if (Number.isNaN(num)) return 'N/A';
-  return `₹${num.toFixed(2)}`;
+function formatConfidence(val) {
+  if (val == null) return '—';
+  const n = Number(val);
+  if (Number.isNaN(n)) return '—';
+  return n >= 1 ? `${n.toFixed(0)}%` : `${(n * 100).toFixed(0)}%`;
 }
 
-function formatConfidence(value) {
-  if (value === null || value === undefined || value === '') return 'N/A';
-  const num = Number(value);
-  if (Number.isNaN(num)) return 'N/A';
-  return `${num > 1 ? Math.round(num) : Math.round(num * 100)}%`;
-}
-
-function normalizeIndianTicker(input) {
+function normalizeTicker(input) {
+  if (!input) return '';
   const cleaned = input.trim().toUpperCase().replace(/\s/g, '');
   if (!cleaned) return '';
   if (cleaned.endsWith('.NS') || cleaned.endsWith('.BO')) return cleaned;
@@ -91,6 +61,7 @@ export default function Home() {
   const [analysis, setAnalysis] = useState(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
   const [marketLoading, setMarketLoading] = useState(false);
   const [marketError, setMarketError] = useState('');
   const [marketData, setMarketData] = useState({
@@ -99,6 +70,11 @@ export default function Home() {
     sentiment: { bullish: 0, neutral: 0, bearish: 0, overall: 'neutral' },
     last_updated: '',
   });
+
+  const [suggestions, setSuggestions] = useState([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+
   const [isMobile, setIsMobile] = useState(
     typeof window !== 'undefined' ? window.innerWidth < 768 : false
   );
@@ -108,6 +84,17 @@ export default function Home() {
     window.addEventListener('resize', onResize);
     return () => window.removeEventListener('resize', onResize);
   }, []);
+
+  const cardStyle = useMemo(
+    () => ({
+      background: '#ffffff',
+      border: '1px solid #e2e8f0',
+      borderRadius: '16px',
+      padding: isMobile ? '16px' : '18px',
+      boxShadow: '0 8px 24px rgba(15, 23, 42, 0.04)',
+    }),
+    [isMobile]
+  );
 
   const loadMarketData = async () => {
     if (!API_URL) {
@@ -119,7 +106,12 @@ export default function Home() {
       setMarketLoading(true);
       setMarketError('');
       const data = await fetchJSON(`${API_URL}/market-movers`);
-      setMarketData(data);
+      setMarketData({
+        top_gainers: Array.isArray(data?.top_gainers) ? data.top_gainers : [],
+        top_losers: Array.isArray(data?.top_losers) ? data.top_losers : [],
+        sentiment: data?.sentiment || { bullish: 0, neutral: 0, bearish: 0, overall: 'neutral' },
+        last_updated: data?.last_updated || '',
+      });
     } catch (err) {
       setMarketError(err.message || 'Unable to load market movers.');
     } finally {
@@ -131,42 +123,75 @@ export default function Home() {
     loadMarketData();
   }, []);
 
-  const handleAnalyze = async () => {
-    const raw = normalizeIndianTicker(ticker);
+  useEffect(() => {
+    if (!API_URL) return;
 
-    if (!raw) {
-      setError('Please enter an Indian stock ticker like RELIANCE, TCS, INFY, HDFCBANK.');
+    const q = ticker.trim();
+    if (!q || q.length < 1) {
+      setSuggestions([]);
+      setSearchLoading(false);
       return;
     }
 
-    if (BLOCKED_US_TICKERS.has(raw)) {
-      setError('Kindly search Indian stocks only.');
-      setAnalysis(null);
+    const timer = setTimeout(async () => {
+      try {
+        setSearchLoading(true);
+        const data = await fetchJSON(`${API_URL}/search?q=${encodeURIComponent(q)}`, 10000);
+        setSuggestions(Array.isArray(data?.results) ? data.results : []);
+      } catch {
+        setSuggestions([]);
+      } finally {
+        setSearchLoading(false);
+      }
+    }, 250);
+
+    return () => clearTimeout(timer);
+  }, [ticker]);
+
+  const handleAnalyze = async (forcedTicker) => {
+    const input = normalizeTicker(forcedTicker || ticker);
+    if (!input) {
+      setError('Please enter a valid Indian stock ticker.');
       return;
     }
 
     if (!API_URL) {
-      setError('VITE_API_URL is missing. Add your Railway backend URL in Netlify environment variables.');
+      setError('VITE_API_URL is missing in Netlify environment variables.');
       return;
     }
 
     try {
       setLoading(true);
       setError('');
-      setAnalysis(null);
+      setShowSuggestions(false);
 
-      const data = await fetchJSON(`${API_URL}/analyze/${encodeURIComponent(raw)}`);
+      const data = await fetchJSON(`${API_URL}/analyze/${encodeURIComponent(input)}`, 25000);
       setAnalysis(data);
     } catch (err) {
-      if (String(err.message).toLowerCase().includes('failed to fetch')) {
-        setError('Frontend could not reach the backend. Check Railway deployment and VITE_API_URL.');
-      } else {
-        setError(err.message || 'Analyze failed.');
-      }
+      setAnalysis(null);
+      setError(err.message || 'Analysis failed.');
     } finally {
       setLoading(false);
     }
   };
+
+  const handleSuggestionSelect = (item) => {
+    setTicker(item?.ticker || '');
+    setSuggestions([]);
+    setShowSuggestions(false);
+    handleAnalyze(item?.ticker || '');
+  };
+
+  const signalBadge = useMemo(() => {
+    const signal = (analysis?.signal || '').toUpperCase();
+    if (signal === 'BUY') {
+      return { color: '#16a34a', bg: '#f0fdf4', border: '#bbf7d0' };
+    }
+    if (signal === 'SELL') {
+      return { color: '#dc2626', bg: '#fef2f2', border: '#fecaca' };
+    }
+    return { color: '#d97706', bg: '#fffbeb', border: '#fde68a' };
+  }, [analysis]);
 
   const sentiment = marketData?.sentiment || {
     bullish: 0,
@@ -175,124 +200,62 @@ export default function Home() {
     overall: 'neutral',
   };
 
-  const signalBadge = badgeStyle(analysis?.signal);
-
   return (
-    <div
-      style={{
-        background: '#f8fafc',
-        minHeight: '100vh',
-        fontFamily: "'Segoe UI', system-ui, -apple-system, sans-serif",
-      }}
-    >
-      {/* Header */}
+    <div style={{ minHeight: '100vh', background: '#f8fafc', fontFamily: 'Inter, sans-serif' }}>
       <header
         style={{
           background: '#ffffff',
           borderBottom: '1px solid #e2e8f0',
-          boxShadow: '0 1px 8px rgba(0,0,0,0.06)',
           position: 'sticky',
           top: 0,
-          zIndex: 100,
-          padding: isMobile ? '12px 16px' : '14px 28px',
+          zIndex: 20,
         }}
       >
         <div
           style={{
+            maxWidth: '1200px',
+            margin: '0 auto',
+            padding: isMobile ? '14px 16px' : '16px 28px',
             display: 'flex',
-            flexDirection: isMobile ? 'column' : 'row',
-            alignItems: isMobile ? 'stretch' : 'center',
             justifyContent: 'space-between',
+            alignItems: 'center',
             gap: '12px',
+            flexWrap: 'wrap',
           }}
         >
+          <div>
+            <div style={{ fontSize: '20px', fontWeight: '900', color: '#0f172a' }}>
+              AI Fiesta Trader
+            </div>
+            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+              Indian Stock Analysis Dashboard
+            </div>
+          </div>
+
           <div
             style={{
-              display: 'flex',
+              display: 'inline-flex',
               alignItems: 'center',
-              justifyContent: 'space-between',
-              gap: '12px',
-              width: '100%',
+              gap: '8px',
+              background: '#f0fdf4',
+              border: '1px solid #bbf7d0',
+              borderRadius: '999px',
+              padding: '6px 12px',
             }}
           >
-            <div style={{ display: 'flex', alignItems: 'center', gap: '10px', minWidth: 0 }}>
-              <div
-                style={{
-                  width: isMobile ? '38px' : '40px',
-                  height: isMobile ? '38px' : '40px',
-                  background: 'linear-gradient(135deg, #10b981, #059669)',
-                  borderRadius: '12px',
-                  display: 'flex',
-                  alignItems: 'center',
-                  justifyContent: 'center',
-                  flexShrink: 0,
-                  boxShadow: '0 4px 14px rgba(16,185,129,0.25)',
-                }}
-              >
-                <TrendingUp size={20} color="#fff" />
-              </div>
-
-              <div style={{ minWidth: 0 }}>
-                <div style={{ display: 'flex', alignItems: 'baseline', gap: '6px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: isMobile ? '16px' : '18px', fontWeight: '800', color: '#0f172a' }}>
-                    Trading Companion
-                  </span>
-                  <span style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '600' }}>
-                    by Waseem
-                  </span>
-                </div>
-                {!isMobile && (
-                  <div style={{ fontSize: '12px', color: '#94a3b8' }}>
-                    AI-Powered Indian Market Intelligence
-                  </div>
-                )}
-              </div>
-            </div>
-
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexShrink: 0 }}>
-              {!isMobile && (
-                <div
-                  style={{
-                    background: '#fff7ed',
-                    border: '1px solid #fed7aa',
-                    borderRadius: '999px',
-                    padding: '6px 12px',
-                    fontSize: '12px',
-                    color: '#c2410c',
-                    fontWeight: '700',
-                  }}
-                >
-                  NSE / BSE
-                </div>
-              )}
-
-              <div
-                style={{
-                  display: 'flex',
-                  alignItems: 'center',
-                  gap: '6px',
-                  background: '#dcfce7',
-                  border: '1px solid #bbf7d0',
-                  borderRadius: '999px',
-                  padding: '6px 12px',
-                }}
-              >
-                <div
-                  style={{
-                    width: '7px',
-                    height: '7px',
-                    borderRadius: '50%',
-                    background: '#22c55e',
-                  }}
-                />
-                <span style={{ fontSize: '12px', fontWeight: '700', color: '#15803d' }}>LIVE</span>
-              </div>
-            </div>
+            <div
+              style={{
+                width: '8px',
+                height: '8px',
+                borderRadius: '50%',
+                background: '#22c55e',
+              }}
+            />
+            <span style={{ fontSize: '12px', fontWeight: '800', color: '#15803d' }}>LIVE</span>
           </div>
         </div>
       </header>
 
-      {/* Hero */}
       <section
         style={{
           background: 'linear-gradient(135deg, #065f46 0%, #0f766e 100%)',
@@ -332,7 +295,7 @@ export default function Home() {
             color: 'rgba(255,255,255,0.85)',
           }}
         >
-          Analyze Indian stocks, check live top gainers and losers, and track market sentiment.
+          Analyze Indian stocks, check live top gainers and losers, and track market sentiment in a clean and simple UI.
         </p>
       </section>
 
@@ -343,7 +306,6 @@ export default function Home() {
           padding: isMobile ? '18px 14px 40px' : '28px 28px 40px',
         }}
       >
-        {/* Analyze */}
         <section style={{ ...cardStyle, marginBottom: '22px' }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '6px', flexWrap: 'wrap' }}>
             <Zap size={18} color="#059669" />
@@ -366,102 +328,169 @@ export default function Home() {
           </div>
 
           <p style={{ fontSize: '13px', color: '#64748b', margin: '0 0 18px', lineHeight: 1.6 }}>
-            Enter an Indian stock ticker like <strong>RELIANCE</strong>, <strong>TCS</strong>, <strong>INFY</strong>, <strong>HDFCBANK</strong> and click <strong>Analyze</strong>.
+            Search by stock code or company name like <strong>RELIANCE</strong>, <strong>Reliance Industries</strong>, <strong>TCS</strong>, <strong>INFY</strong>, <strong>HDFC Bank</strong>.
           </p>
 
-          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap' }}>
-            <input
-              type="text"
-              value={ticker}
-              onChange={(e) => setTicker(e.target.value.toUpperCase())}
-              onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
-              placeholder="RELIANCE · TCS · INFY · HDFCBANK · WIPRO"
-              style={{
-                flex: 1,
-                minWidth: '220px',
-                background: '#f8fafc',
-                border: '1.5px solid #e2e8f0',
-                borderRadius: '12px',
-                padding: '14px 16px',
-                fontSize: '15px',
-                color: '#0f172a',
-                outline: 'none',
-                fontWeight: '600',
-              }}
-            />
+          <div style={{ display: 'flex', gap: '12px', flexWrap: 'wrap', alignItems: 'flex-start' }}>
+            <div style={{ flex: 1, minWidth: '220px', position: 'relative' }}>
+              <div style={{ position: 'relative' }}>
+                <Search
+                  size={16}
+                  color="#94a3b8"
+                  style={{
+                    position: 'absolute',
+                    top: '50%',
+                    left: '14px',
+                    transform: 'translateY(-50%)',
+                  }}
+                />
+                <input
+                  type="text"
+                  value={ticker}
+                  onChange={(e) => {
+                    setTicker(e.target.value.toUpperCase());
+                    setShowSuggestions(true);
+                  }}
+                  onFocus={() => setShowSuggestions(true)}
+                  onBlur={() => {
+                    setTimeout(() => setShowSuggestions(false), 150);
+                  }}
+                  onKeyDown={(e) => e.key === 'Enter' && handleAnalyze()}
+                  placeholder="RELIANCE · TCS · INFY · HDFCBANK · WIPRO"
+                  style={{
+                    width: '100%',
+                    boxSizing: 'border-box',
+                    background: '#f8fafc',
+                    border: '1.5px solid #e2e8f0',
+                    borderRadius: '12px',
+                    padding: '13px 14px 13px 40px',
+                    fontSize: '14px',
+                    color: '#0f172a',
+                    outline: 'none',
+                  }}
+                />
+              </div>
+
+              {showSuggestions && (ticker.trim() || suggestions.length > 0) && (
+                <div
+                  style={{
+                    position: 'absolute',
+                    top: 'calc(100% + 8px)',
+                    left: 0,
+                    right: 0,
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '12px',
+                    boxShadow: '0 12px 32px rgba(15, 23, 42, 0.10)',
+                    overflow: 'hidden',
+                    zIndex: 30,
+                  }}
+                >
+                  {searchLoading ? (
+                    <div style={{ padding: '12px 14px', fontSize: '13px', color: '#64748b' }}>
+                      Searching...
+                    </div>
+                  ) : suggestions.length > 0 ? (
+                    suggestions.slice(0, 5).map((item, idx) => (
+                      <button
+                        key={`${item.ticker}-${idx}`}
+                        type="button"
+                        onMouseDown={() => handleSuggestionSelect(item)}
+                        style={{
+                          width: '100%',
+                          textAlign: 'left',
+                          border: 'none',
+                          background: '#ffffff',
+                          padding: '12px 14px',
+                          cursor: 'pointer',
+                          borderBottom: idx !== suggestions.slice(0, 5).length - 1 ? '1px solid #f1f5f9' : 'none',
+                        }}
+                      >
+                        <div style={{ fontSize: '13px', fontWeight: '800', color: '#0f172a' }}>
+                          {item.ticker}
+                        </div>
+                        <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
+                          {item.name}
+                        </div>
+                      </button>
+                    ))
+                  ) : ticker.trim() ? (
+                    <div style={{ padding: '12px 14px', fontSize: '13px', color: '#64748b' }}>
+                      No matching stocks found.
+                    </div>
+                  ) : null}
+                </div>
+              )}
+            </div>
 
             <button
-              onClick={handleAnalyze}
+              onClick={() => handleAnalyze()}
               disabled={loading}
               style={{
                 border: 'none',
-                borderRadius: '12px',
-                padding: isMobile ? '14px 18px' : '14px 24px',
-                background: loading ? '#86efac' : 'linear-gradient(135deg, #10b981, #059669)',
+                background: loading ? '#94a3b8' : '#0f766e',
                 color: '#ffffff',
-                fontSize: '15px',
+                borderRadius: '12px',
+                padding: '13px 18px',
+                minWidth: isMobile ? '100%' : '130px',
+                fontSize: '14px',
                 fontWeight: '800',
                 cursor: loading ? 'not-allowed' : 'pointer',
-                boxShadow: loading ? 'none' : '0 6px 16px rgba(16,185,129,0.24)',
-                display: 'flex',
-                alignItems: 'center',
-                gap: '8px',
-                whiteSpace: 'nowrap',
+                boxShadow: '0 8px 20px rgba(15,118,110,0.18)',
               }}
             >
-              {loading ? <RefreshCw size={16} style={{ animation: 'spin 1s linear infinite' }} /> : <TrendingUp size={16} />}
               {loading ? 'Analyzing...' : 'Analyze'}
             </button>
           </div>
 
-          {error && (
+          {error ? (
             <div
               style={{
-                marginTop: '16px',
-                background: '#fff7ed',
-                border: '1px solid #fed7aa',
+                marginTop: '14px',
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#b91c1c',
                 borderRadius: '12px',
-                padding: '14px 16px',
-                display: 'flex',
-                gap: '10px',
-                alignItems: 'flex-start',
+                padding: '12px 14px',
+                fontSize: '13px',
+                fontWeight: '600',
               }}
             >
-              <AlertCircle size={18} color="#d97706" style={{ flexShrink: 0, marginTop: '1px' }} />
-              <div>
-                <div style={{ fontSize: '14px', fontWeight: '800', color: '#92400e' }}>Notice</div>
-                <div style={{ fontSize: '13px', color: '#b45309', marginTop: '3px', lineHeight: 1.5 }}>
-                  {error}
-                </div>
-              </div>
+              {error}
             </div>
-          )}
+          ) : null}
         </section>
 
-        {/* Analysis result */}
         {analysis && (
           <section style={{ marginBottom: '22px' }}>
             <div
               style={{
                 display: 'grid',
-                gridTemplateColumns: isMobile ? '1fr 1fr' : 'repeat(4, 1fr)',
+                gridTemplateColumns: isMobile ? '1fr' : 'repeat(4, 1fr)',
                 gap: '14px',
                 marginBottom: '14px',
               }}
             >
-              <div style={{ ...cardStyle, borderTop: '3px solid #0ea5e9' }}>
+              <div style={{ ...cardStyle, borderTop: '3px solid #0f766e' }}>
                 <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '800', textTransform: 'uppercase', marginBottom: '8px' }}>
                   Current Price
                 </div>
-                <div style={{ fontSize: isMobile ? '18px' : '24px', fontWeight: '800', color: '#0f172a' }}>
-                  {formatINR(analysis.current_price)}
+                <div style={{ fontSize: isMobile ? '22px' : '28px', fontWeight: '900', color: '#0f172a' }}>
+                  ₹{analysis.current_price ?? '—'}
                 </div>
                 <div style={{ fontSize: '12px', color: '#64748b', marginTop: '4px' }}>
                   {analysis.company_name || analysis.ticker}
                 </div>
               </div>
 
-              <div style={{ ...cardStyle, borderTop: `3px solid ${signalBadge.color}`, background: signalBadge.bg }}>
+              <div
+                style={{
+                  ...cardStyle,
+                  borderTop: `3px solid ${signalBadge.color}`,
+                  background: signalBadge.bg,
+                  borderColor: signalBadge.border,
+                }}
+              >
                 <div style={{ fontSize: '11px', color: '#94a3b8', fontWeight: '800', textTransform: 'uppercase', marginBottom: '8px' }}>
                   AI Signal
                 </div>
@@ -535,6 +564,58 @@ export default function Home() {
               </div>
             </div>
 
+            <div style={{ ...cardStyle, marginBottom: '14px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px', flexWrap: 'wrap' }}>
+                <BarChart2 size={17} color="#0f766e" />
+                <span style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>
+                  Justification & Suggested Timeframe
+                </span>
+              </div>
+
+              <div
+                style={{
+                  background: '#f8fafc',
+                  border: '1px solid #e2e8f0',
+                  borderRadius: '12px',
+                  padding: '14px',
+                  marginBottom: '12px',
+                }}
+              >
+                <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', marginBottom: '8px' }}>
+                  Suggested Action Window
+                </div>
+                <div style={{ fontSize: '14px', color: '#0f172a', fontWeight: '700', lineHeight: 1.6 }}>
+                  {analysis.timeframe || 'No timeframe available.'}
+                </div>
+              </div>
+
+              {Array.isArray(analysis.justification) && analysis.justification.length > 0 ? (
+                <div
+                  style={{
+                    background: '#ffffff',
+                    border: '1px solid #e2e8f0',
+                    borderRadius: '12px',
+                    padding: '14px 16px',
+                  }}
+                >
+                  <div style={{ fontSize: '11px', color: '#64748b', fontWeight: '800', textTransform: 'uppercase', marginBottom: '10px' }}>
+                    On what basis is this signal generated?
+                  </div>
+                  <ul style={{ margin: 0, paddingLeft: '18px', color: '#334155' }}>
+                    {analysis.justification.map((point, index) => (
+                      <li key={index} style={{ marginBottom: '9px', fontSize: '13px', lineHeight: 1.7 }}>
+                        {point}
+                      </li>
+                    ))}
+                  </ul>
+                </div>
+              ) : (
+                <div style={{ fontSize: '13px', color: '#64748b' }}>
+                  No justification points available.
+                </div>
+              )}
+            </div>
+
             <div style={cardStyle}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                 <Newspaper size={17} color="#f59e0b" />
@@ -544,56 +625,53 @@ export default function Home() {
               </div>
 
               {Array.isArray(analysis.news) && analysis.news.length > 0 ? (
-  <div
-    style={{
-      display: 'grid',
-      gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)',
-      gap: '12px',
-    }}
-  >
-    {analysis.news.slice(0, 4).map((item, index) => (
-      <div
-        key={index}
-        style={{
-          background: '#f8fafc',
-          border: '1px solid #e2e8f0',
-          borderRadius: '12px',
-          padding: '14px',
-        }}
-      >
-        {/* Force string conversion here just in case */}
-        <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', lineHeight: 1.6, marginBottom: '8px' }}>
-          {typeof item.title === 'string' ? item.title : 'Market Update'}
-        </div>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
-          <span style={{ fontSize: '11px', color: '#94a3b8' }}>
-            {typeof item.source === 'string' ? item.source : 'News'} · {item.published_at}
-          </span>
-          <span
-            style={{
-              fontSize: '11px',
-              fontWeight: '800',
-              color: sentimentColor(item.sentiment),
-              textTransform: 'capitalize',
-            }}
-          >
-            {item.sentiment}
-          </span>
-        </div>
-      </div>
-    ))}
-  </div>
-) : (
-  <div style={{ fontSize: '13px', color: '#64748b' }}>
-    No recent news available for this stock right now.
-  </div>
-)}
-
+                <div
+                  style={{
+                    display: 'grid',
+                    gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)',
+                    gap: '12px',
+                  }}
+                >
+                  {analysis.news.slice(0, 4).map((item, index) => (
+                    <div
+                      key={index}
+                      style={{
+                        background: '#f8fafc',
+                        border: '1px solid #e2e8f0',
+                        borderRadius: '12px',
+                        padding: '14px',
+                      }}
+                    >
+                      <div style={{ fontSize: '13px', fontWeight: '700', color: '#0f172a', lineHeight: 1.6, marginBottom: '8px' }}>
+                        {typeof item.title === 'string' ? item.title : 'Market Update'}
+                      </div>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', gap: '8px', flexWrap: 'wrap' }}>
+                        <span style={{ fontSize: '11px', color: '#94a3b8' }}>
+                          {typeof item.source === 'string' ? item.source : 'News'} · {item.published_at}
+                        </span>
+                        <span
+                          style={{
+                            fontSize: '11px',
+                            fontWeight: '800',
+                            color: sentimentColor(item.sentiment),
+                            textTransform: 'capitalize',
+                          }}
+                        >
+                          {item.sentiment}
+                        </span>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <div style={{ fontSize: '13px', color: '#64748b' }}>
+                  No recent news available for this stock right now.
+                </div>
+              )}
             </div>
           </section>
         )}
 
-        {/* Dynamic movers */}
         <section style={{ ...cardStyle, marginBottom: '22px' }}>
           <div
             style={{
@@ -633,76 +711,137 @@ export default function Home() {
               }}
             >
               <RefreshCw size={14} style={{ animation: marketLoading ? 'spin 1s linear infinite' : 'none' }} />
-              {marketLoading ? 'Refreshing...' : 'Refresh'}
+              {marketLoading ? 'Updating...' : 'Refresh'}
             </button>
           </div>
 
-          {marketError && (
+          {marketError ? (
             <div
               style={{
                 marginBottom: '14px',
-                background: '#fff7ed',
-                border: '1px solid #fed7aa',
-                borderRadius: '10px',
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                color: '#b91c1c',
+                borderRadius: '12px',
                 padding: '12px 14px',
                 fontSize: '13px',
-                color: '#b45309',
+                fontWeight: '600',
               }}
             >
               {marketError}
             </div>
-          )}
+          ) : null}
 
           <div
             style={{
               display: 'grid',
-              gridTemplateColumns: isMobile ? '1fr' : '1fr 1fr',
-              gap: '20px',
+              gridTemplateColumns: isMobile ? '1fr' : 'repeat(2, 1fr)',
+              gap: '14px',
             }}
           >
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+            <div
+              style={{
+                background: '#f0fdf4',
+                border: '1px solid #bbf7d0',
+                borderRadius: '14px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                 <TrendingUp size={17} color="#16a34a" />
-                <span style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>Top 5 Gainers</span>
+                <span style={{ fontSize: '15px', fontWeight: '800', color: '#166534' }}>
+                  Top 5 Gainers
+                </span>
               </div>
 
-              <ul style={{ margin: 0, paddingLeft: '18px' }}>
-                {marketData.top_gainers.map((item, index) => (
-                  <li key={index} style={{ marginBottom: '12px', color: '#0f172a' }}>
-                    <div style={{ fontSize: '14px', fontWeight: '700' }}>
-                      {item.ticker} <span style={{ color: '#16a34a' }}>({item.change_pct > 0 ? '+' : ''}{item.change_pct}%)</span>
+              {Array.isArray(marketData.top_gainers) && marketData.top_gainers.length > 0 ? (
+                marketData.top_gainers.map((item, idx) => (
+                  <div
+                    key={`${item.ticker}-${idx}`}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: '10px',
+                      padding: '10px 0',
+                      borderBottom: idx !== marketData.top_gainers.length - 1 ? '1px solid #dcfce7' : 'none',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: '800', color: '#14532d' }}>
+                        {item.ticker}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#4b5563', marginTop: '2px' }}>
+                        {item.name}
+                      </div>
                     </div>
-                    <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>
-                      {item.name} · {formatINR(item.price)}
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '13px', fontWeight: '800', color: '#14532d' }}>
+                        ₹{item.price}
+                      </div>
+                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#16a34a' }}>
+                        {item.change_pct > 0 ? '+' : ''}
+                        {item.change_pct}%
+                      </div>
                     </div>
-                  </li>
-                ))}
-              </ul>
+                  </div>
+                ))
+              ) : (
+                <div style={{ fontSize: '13px', color: '#64748b' }}>No gainers data available.</div>
+              )}
             </div>
 
-            <div>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '10px' }}>
+            <div
+              style={{
+                background: '#fef2f2',
+                border: '1px solid #fecaca',
+                borderRadius: '14px',
+                padding: '16px',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginBottom: '14px' }}>
                 <TrendingDown size={17} color="#dc2626" />
-                <span style={{ fontSize: '16px', fontWeight: '800', color: '#0f172a' }}>Top 5 Losers</span>
+                <span style={{ fontSize: '15px', fontWeight: '800', color: '#991b1b' }}>
+                  Top 5 Losers
+                </span>
               </div>
 
-              <ul style={{ margin: 0, paddingLeft: '18px' }}>
-                {marketData.top_losers.map((item, index) => (
-                  <li key={index} style={{ marginBottom: '12px', color: '#0f172a' }}>
-                    <div style={{ fontSize: '14px', fontWeight: '700' }}>
-                      {item.ticker} <span style={{ color: '#dc2626' }}>({item.change_pct}%)</span>
+              {Array.isArray(marketData.top_losers) && marketData.top_losers.length > 0 ? (
+                marketData.top_losers.map((item, idx) => (
+                  <div
+                    key={`${item.ticker}-${idx}`}
+                    style={{
+                      display: 'flex',
+                      justifyContent: 'space-between',
+                      gap: '10px',
+                      padding: '10px 0',
+                      borderBottom: idx !== marketData.top_losers.length - 1 ? '1px solid #fee2e2' : 'none',
+                    }}
+                  >
+                    <div>
+                      <div style={{ fontSize: '13px', fontWeight: '800', color: '#7f1d1d' }}>
+                        {item.ticker}
+                      </div>
+                      <div style={{ fontSize: '12px', color: '#4b5563', marginTop: '2px' }}>
+                        {item.name}
+                      </div>
                     </div>
-                    <div style={{ fontSize: '12px', color: '#64748b', marginTop: '3px' }}>
-                      {item.name} · {formatINR(item.price)}
+                    <div style={{ textAlign: 'right' }}>
+                      <div style={{ fontSize: '13px', fontWeight: '800', color: '#7f1d1d' }}>
+                        ₹{item.price}
+                      </div>
+                      <div style={{ fontSize: '12px', fontWeight: '700', color: '#dc2626' }}>
+                        {item.change_pct}%
+                      </div>
                     </div>
-                  </li>
-                ))}
-              </ul>
+                  </div>
+                ))
+              ) : (
+                <div style={{ fontSize: '13px', color: '#64748b' }}>No losers data available.</div>
+              )}
             </div>
           </div>
         </section>
 
-        {/* Dynamic sentiment */}
         <section style={cardStyle}>
           <div
             style={{
