@@ -1,184 +1,169 @@
 import os
 import json
-import asyncio
-import logging
+import yfinance as yf
 import google.generativeai as genai
-from dotenv import load_dotenv
-from fastapi import HTTPException
+from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 
-load_dotenv()
-logger = logging.getLogger(__name__)
+app = FastAPI()
 
-# Keep model names simple and stable
-PRIMARY_MODEL = "gemini-1.5-flash"
-FALLBACK_MODEL = "gemini-1.5-pro"
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
-
-def _configure_genai():
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise HTTPException(
-            status_code=500,
-            detail="GOOGLE_API_KEY not configured on the server."
-        )
-    genai.configure(api_key=api_key)
+genai.configure(api_key=os.environ.get("GOOGLE_API_KEY", ""))
 
 
-def _build_prompt(stock_data: dict, news_data) -> str:
-    return f"""
-You are a professional stock market analyst.
-
-Analyze the following stock data and recent news, then return ONLY valid JSON.
-
-Stock Data:
-{json.dumps(stock_data, indent=2)}
-
-Latest News:
-{json.dumps(news_data, indent=2)}
-
-Return ONLY valid JSON with these exact keys:
-- signal: "BUY", "SELL", or "HOLD"
-- confidence: number between 0 and 1
-- reasoning: short explanation
-- sentiment: "bullish", "bearish", or "neutral"
-- key_drivers: short summary of positive factors
-- risk_factors: short summary of negative factors
-
-If news is empty, still analyze using stock data only.
-
-Do not include markdown.
-Do not include code fences.
-Do not include any extra text outside the JSON.
-"""
-
-
-def _parse_response(text: str) -> dict:
-    raw = (text or "").strip()
-
-    if not raw:
-        raise HTTPException(
-            status_code=500,
-            detail="AI returned an empty response."
-        )
-
-    if raw.startswith("```"):
-        lines = raw.splitlines()
-
-        if lines and lines[0].startswith("```"):
-            lines = lines[1:]
-
-        if lines and lines[-1].strip() == "```":
-            lines = lines[:-1]
-
-        raw = "\n".join(lines).strip()
-
-        if raw.lower().startswith("json"):
-            raw = raw[4:].strip()
-
+def get_stock_data(ticker: str):
+    """Fetch stock info and recent history from Yahoo Finance."""
     try:
-        return json.loads(raw)
-    except json.JSONDecodeError:
-        pass
+        stock = yf.Ticker(ticker)
+        info  = stock.info or {}
+        hist  = stock.history(period="5d")
 
-    start = raw.find("{")
-    end = raw.rfind("}")
+        # ── current price — try multiple fields ──────────────────────
+        price = (
+            info.get("currentPrice")
+            or info.get("regularMarketPrice")
+            or info.get("previousClose")
+        )
+        if price is None and not hist.empty:
+            price = float(hist["Close"].iloc[-1])
 
-    if start != -1 and end != -1 and end > start:
-        possible_json = raw[start:end + 1]
-        try:
-            return json.loads(possible_json)
-        except json.JSONDecodeError:
-            pass
+        # ── price change ──────────────────────────────────────────────
+        prev  = info.get("previousClose") or info.get("regularMarketPreviousClose")
+        change_pct = None
+        if price and prev and prev != 0:
+            change_pct = round(((price - prev) / prev) * 100, 2)
 
-    raise HTTPException(
-        status_code=500,
-        detail=f"AI returned invalid JSON: {raw[:300]}"
-    )
+        # ── 52-week range ─────────────────────────────────────────────
+        week52_low  = info.get("fiftyTwoWeekLow")
+        week52_high = info.get("fiftyTwoWeekHigh")
 
+        # ── volume ────────────────────────────────────────────────────
+        volume = info.get("regularMarketVolume") or info.get("volume")
 
-def _extract_text_from_response(response) -> str:
-    text = getattr(response, "text", None)
-    if text:
-        return text
-
-    try:
-        candidates = getattr(response, "candidates", []) or []
-        if candidates:
-            parts = getattr(candidates[0].content, "parts", []) or []
-            collected = []
-            for part in parts:
-                part_text = getattr(part, "text", None)
-                if part_text:
-                    collected.append(part_text)
-            return "".join(collected).strip()
-    except Exception:
-        pass
-
-    return ""
-
-
-def _call_model(model_name: str, prompt: str) -> dict:
-    model = genai.GenerativeModel(model_name)
-    response = model.generate_content(
-        prompt,
-        generation_config={
-            "temperature": 0.2,
-            "max_output_tokens": 700,
+        return {
+            "current_price": round(float(price), 2) if price else None,
+            "previous_close": round(float(prev), 2)  if prev  else None,
+            "change_pct":     change_pct,
+            "week52_low":     week52_low,
+            "week52_high":    week52_high,
+            "volume":         volume,
+            "company_name":   info.get("longName") or info.get("shortName") or ticker,
+            "sector":         info.get("sector", ""),
+            "industry":       info.get("industry", ""),
+            "market_cap":     info.get("marketCap"),
+            "pe_ratio":       info.get("trailingPE"),
         }
-    )
-
-    text = _extract_text_from_response(response)
-    if not text:
-        raise ValueError(f"{model_name} returned no text response")
-
-    return _parse_response(text)
+    except Exception as e:
+        print(f"[yfinance error] {ticker}: {e}")
+        return {}
 
 
-def _analyze_sync(stock_data: dict, news_data) -> dict:
-    _configure_genai()
-    prompt = _build_prompt(stock_data, news_data)
+def analyze_with_ai(ticker: str, stock_data: dict) -> dict:
+    """Call Gemini to produce a structured signal."""
+    prompt = f"""
+You are a professional Indian stock market analyst specializing in NSE/BSE equities.
 
+Stock: {ticker}
+Company: {stock_data.get('company_name', ticker)}
+Current Price: ₹{stock_data.get('current_price', 'N/A')}
+Previous Close: ₹{stock_data.get('previous_close', 'N/A')}
+Change: {stock_data.get('change_pct', 'N/A')}%
+52-Week Low: ₹{stock_data.get('week52_low', 'N/A')}
+52-Week High: ₹{stock_data.get('week52_high', 'N/A')}
+Sector: {stock_data.get('sector', 'N/A')}
+Industry: {stock_data.get('industry', 'N/A')}
+P/E Ratio: {stock_data.get('pe_ratio', 'N/A')}
+Market Cap: {stock_data.get('market_cap', 'N/A')}
+
+Based on this data, provide a trading signal for Indian retail investors.
+
+Respond ONLY with valid JSON in this exact format:
+{{
+  "signal": "BUY" or "SELL" or "HOLD",
+  "confidence": 0.0 to 1.0,
+  "sentiment": "bullish" or "bearish" or "neutral",
+  "reasoning": "2-3 sentence explanation",
+  "key_drivers": "Main positive factors driving this signal",
+  "risk_factors": "Key risks to watch out for"
+}}
+"""
     try:
-        return _call_model(PRIMARY_MODEL, prompt)
-    except Exception as primary_error:
-        logger.warning(f"Primary model failed ({PRIMARY_MODEL}): {primary_error}")
+        model    = genai.GenerativeModel("gemini-2.0-flash")
+        response = model.generate_content(prompt)
+        text     = response.text.strip()
 
-    try:
-        return _call_model(FALLBACK_MODEL, prompt)
-    except Exception as fallback_error:
-        logger.warning(f"Fallback model failed ({FALLBACK_MODEL}): {fallback_error}")
+        # strip markdown code fences if present
+        if text.startswith("```"):
+            text = text.split("```")[1]
+            if text.startswith("json"):
+                text = text[4:]
+        text = text.strip()
+
+        result = json.loads(text)
+
+        # normalize signal
+        result["signal"] = str(result.get("signal", "HOLD")).upper()
+        if result["signal"] not in ("BUY", "SELL", "HOLD"):
+            result["signal"] = "HOLD"
+
+        # normalize confidence
+        conf = float(result.get("confidence", 0.5))
+        result["confidence"] = conf if conf <= 1.0 else conf / 100.0
+
+        return result
+
+    except Exception as e:
+        print(f"[AI error] {ticker}: {e}")
+        return {
+            "signal":      "HOLD",
+            "confidence":  0.5,
+            "sentiment":   "neutral",
+            "reasoning":   "AI analysis temporarily unavailable. Defaulting to HOLD.",
+            "key_drivers": "Insufficient data at this time.",
+            "risk_factors": "Please retry in a few minutes.",
+        }
+
+
+@app.get("/")
+def root():
+    return {"status": "Trading Companion API is running", "market": "NSE/BSE India"}
+
+
+@app.get("/analyze/{ticker}")
+def analyze(ticker: str):
+    ticker = ticker.upper().strip()
+
+    # auto-add .NS if no suffix
+    if not ticker.endswith(".NS") and not ticker.endswith(".BO"):
+        ticker = f"{ticker}.NS"
+
+    stock_data = get_stock_data(ticker)
+
+    if not stock_data:
         raise HTTPException(
-            status_code=500,
-            detail="AI analysis unavailable. Both Gemini models failed."
+            status_code=404,
+            detail=f"Could not fetch data for {ticker}. Check the ticker symbol and try again."
         )
 
+    ai_result = analyze_with_ai(ticker, stock_data)
 
-async def analyze_stock_with_ai(*args, **kwargs) -> dict:
-    """
-    Supports:
-    - analyze_stock_with_ai(stock_data, news_data)
-    - analyze_stock_with_ai(symbol, stock_data, news_data)
-    - analyze_stock_with_ai(stock_data=..., news_data=...)
-    """
-    stock_data = None
-    news_data = None
-
-    if len(args) == 2:
-        stock_data, news_data = args
-    elif len(args) == 3:
-        _, stock_data, news_data = args
-    else:
-        stock_data = kwargs.get("stock_data")
-        news_data = kwargs.get("news_data")
-
-    if stock_data is None or news_data is None:
-        raise HTTPException(
-            status_code=500,
-            detail="analyze_stock_with_ai requires stock_data and news_data."
-        )
-
-    return await asyncio.to_thread(_analyze_sync, stock_data, news_data)
-
-
-def get_ai_analysis(stock_data: dict, news_data) -> dict:
-    return _analyze_sync(stock_data, news_data)
+    return {
+        "ticker":        ticker.replace(".NS", "").replace(".BO", ""),
+        "current_price": stock_data.get("current_price"),
+        "previous_close":stock_data.get("previous_close"),
+        "change_pct":    stock_data.get("change_pct"),
+        "company_name":  stock_data.get("company_name"),
+        "signal":        ai_result.get("signal", "HOLD"),
+        "confidence":    ai_result.get("confidence", 0.5),
+        "sentiment":     ai_result.get("sentiment", "neutral"),
+        "reasoning":     ai_result.get("reasoning", ""),
+        "key_drivers":   ai_result.get("key_drivers", ""),
+        "risk_factors":  ai_result.get("risk_factors", ""),
+        "news":          [],
+    }
