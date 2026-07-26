@@ -224,12 +224,13 @@ export default function Home() {
           }}
         >
           <div>
-            <div style={{ fontSize: '20px', fontWeight: '900', color: '#0f172a' }}>
-              AI Fiesta Trader
-            </div>
-            <div style={{ fontSize: '12px', color: '#64748b', marginTop: '2px' }}>
-              Indian Stock Analysis Dashboard
-            </div>
+            <h1 style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a', margin: 0 }}>
+  Trading Companion
+  <span style={{ fontSize: '14px', fontWeight: '400', color: '#64748b', marginLeft: '6px' }}>
+    by Waseem
+  </span>
+</h1>
+
           </div>
 
           <div
