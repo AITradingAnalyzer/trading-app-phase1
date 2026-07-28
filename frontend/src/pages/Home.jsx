@@ -223,15 +223,16 @@ export default function Home() {
             flexWrap: 'wrap',
           }}
         >
-          <div>
+                   <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+            <span style={{ fontSize: '26px', lineHeight: 1 }}>💹</span>
             <h1 style={{ fontSize: '24px', fontWeight: '800', color: '#0f172a', margin: 0 }}>
-  Trading Companion
-  <span style={{ fontSize: '14px', fontWeight: '400', color: '#64748b', marginLeft: '6px' }}>
-    by Waseem
-  </span>
-</h1>
-
+              Trading Companion
+              <span style={{ fontSize: '14px', fontWeight: '400', color: '#64748b', marginLeft: '6px' }}>
+                by Waseem
+              </span>
+            </h1>
           </div>
+
 
           <div
             style={{
