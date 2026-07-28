@@ -13,7 +13,7 @@ import {
   X,
 } from 'lucide-react';
 import Watchlist from '../components/Watchlist';
-import { useDarkMode } from '../context/DarkModeContext';
+import { useDarkMode } from '../context/DarkModeContext.jsx';
 
 const API_URL = import.meta.env.VITE_API_URL || '';
 

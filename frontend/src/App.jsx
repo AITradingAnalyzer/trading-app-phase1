@@ -1,6 +1,5 @@
-import React from 'react';
-import { DarkModeProvider } from './context/DarkModeContext';
-import Home from './pages/Home';
+import { DarkModeProvider } from './context/DarkModeContext.jsx';
+import Home from './pages/Home.jsx';
 
 function App() {
   return (
