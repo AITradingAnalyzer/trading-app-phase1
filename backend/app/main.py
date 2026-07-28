@@ -1,4 +1,6 @@
 # app/main.py
+# Phase 2.1 - Dark Mode & Watchlist (Frontend only - no backend changes needed)
+# Phase 2.2 (Coming next): Add /historical-data/{ticker} endpoint for charts
 
 import os
 import json

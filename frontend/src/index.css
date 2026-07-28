@@ -30,6 +30,20 @@
   }
 }
 
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --bg-primary: #ffffff;
+  --text-primary: #111827;
+}
+
+.dark {
+  --bg-primary: #111827;
+  --text-primary: #f9fafb;
+}
+
 @media (prefers-color-scheme: dark) {
   :root {
     --text: #9ca3af;
