@@ -463,8 +463,17 @@ export default function Home() {
           ) : null}
         </section>
 
-        {analysis && (
-          <section style={{ marginBottom: '22px' }}>
+          {analysis && (
+          <div
+            style={{
+              background: '#ffffff',
+              border: '1px solid #e2e8f0',
+              borderRadius: '16px',
+              padding: isMobile ? '18px' : '24px',
+              marginBottom: '22px',
+              boxShadow: '0 1px 3px rgba(0,0,0,0.04)',
+            }}
+          >
             <div
               style={{
                 display: 'grid',
@@ -671,7 +680,7 @@ export default function Home() {
                 </div>
               )}
             </div>
-          </section>
+          </div>
         )}
 
         <section style={{ ...cardStyle, marginBottom: '22px' }}>
